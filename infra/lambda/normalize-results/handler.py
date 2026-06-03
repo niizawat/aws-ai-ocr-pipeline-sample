@@ -60,6 +60,29 @@ def handler(event, context):
                     }
                 )
 
+    elif extraction_type == "excel-pymupdf":
+        # LibreOffice 変換後に PyMuPDF でテキスト抽出した経路（OCR スキップ）。
+        # PDF ページテキストと表 Markdown を sections に格納する。
+        for page in event.get("pages", []):
+            page_number = page["pageNumber"]
+            sections.append(
+                {
+                    "sectionId": f"page{page_number}",
+                    "sectionType": "pdf-page",
+                    "pageNumber": page_number,
+                    "content": page["text"],
+                }
+            )
+            for table_idx, table_md in enumerate(page.get("tables", [])):
+                sections.append(
+                    {
+                        "sectionId": f"page{page_number}-table{table_idx + 1}",
+                        "sectionType": "pdf-table",
+                        "pageNumber": page_number,
+                        "content": table_md,
+                    }
+                )
+
     elif extraction_type == "ocr":
         # PaddleOCR-VL のレイアウト種別（text/table/chart/formula/image 等）を
         # セクション種別へ反映する。表・グラフは構造化済みの内容が content に入る。

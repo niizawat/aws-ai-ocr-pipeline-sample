@@ -633,15 +633,32 @@ export class PipelineStack extends cdk.Stack {
 
     // OCR ループの「準備完了」到達点（並列ブランチの終端として check 出力を引き継ぐ）
     const ocrShapesReady = new sfn.Pass(this, 'OcrShapesReady');
+    const ocrShapesSubmit = buildOcrAsync('OcrShapes', '$.key', ocrShapesReady);
+
+    // LibreOffice 変換後に PyMuPDF でテキスト品質を判定する（設計書 §7.2 xlsx 適用）。
+    // デジタルテキストが十分（hasPagesNeedOcr=false）なら OCR をスキップし認識精度を向上させる。
+    const extractPdfTextShapes = new tasks.LambdaInvoke(this, 'ExtractPdfTextShapes', {
+      lambdaFunction: extractPdfTextFn,
+      payloadResponseOnly: true,
+    });
+    // OCR スキップ時のブランチ終端（Pass のまま ExtractPdfTextShapes 出力を引き継ぐ）
+    const ocrShapesSkipped = new sfn.Pass(this, 'OcrShapesSkipped');
+    extractPdfTextShapes.next(
+      new sfn.Choice(this, 'PdfOcrCheckShapes')
+        .when(
+          sfn.Condition.booleanEquals('$.hasPagesNeedOcr', true),
+          ocrShapesSubmit,
+        )
+        .otherwise(ocrShapesSkipped),
+    );
 
     const parallelShapes = new sfn.Parallel(this, 'ParallelShapesProcessing');
     parallelShapes.branch(extractExcelShapes);
     parallelShapes.branch(
-      libreOfficeConvert.next(
-        buildOcrAsync('OcrShapes', '$.key', ocrShapesReady),
-      ),
+      libreOfficeConvert.next(extractPdfTextShapes),
     );
 
+    // --- OCR 経由マージ（既存: confidence 判定あり）---
     const mergeResults = new sfn.Pass(this, 'MergeShapesResults', {
       parameters: {
         'bucket.$': '$[1].bucket',
@@ -715,7 +732,46 @@ export class PipelineStack extends cdk.Stack {
           .next(done),
       );
 
-    const shapesChain = parallelShapes.next(mergeResults).next(confidenceCheckShapes);
+    // --- PyMuPDF 経由マージ（OCR スキップ: confidence=1.0 で直行）---
+    const mergeShapesPdfText = new sfn.Pass(this, 'MergeShapesPdfText', {
+      parameters: {
+        'bucket.$': '$[1].bucket',
+        'key.$': '$[1].key',
+        'report_id.$': '$[1].report_id',
+        'extractionType': 'excel-pymupdf',
+        'excelData.$': '$[0]',
+        'pages.$': '$[1].pages',
+        'fullText.$': '$[1].fullText',
+        'pageCount.$': '$[1].pageCount',
+        'confidence': 1.0,
+      },
+    });
+    const normalizeShapesPdfHigh = new tasks.LambdaInvoke(this, 'NormalizeShapesPdfHigh', {
+      lambdaFunction: normalizeResultsFn,
+      payloadResponseOnly: true,
+    });
+    const storeShapesPdfHigh = new tasks.LambdaInvoke(this, 'StoreShapesPdfHigh', {
+      lambdaFunction: storeResultsFn,
+      payloadResponseOnly: true,
+    });
+    mergeShapesPdfText
+      .next(normalizeShapesPdfHigh)
+      .next(storeShapesPdfHigh)
+      .next(makeIndexTask('IndexEmbeddingsShapesPdfHigh'))
+      .next(done);
+
+    // Parallel 後: Branch1 が PyMuPDF 経路（OcrShapesSkipped）かを判別する。
+    // OCR 経路（invoke-ocr 出力）には hasPagesNeedOcr が存在しないため isPresent で判定する。
+    const shapesPathChoice = new sfn.Choice(this, 'ShapesPathChoice')
+      .when(
+        sfn.Condition.isPresent('$[1].hasPagesNeedOcr'),
+        mergeShapesPdfText,
+      )
+      .otherwise(
+        mergeResults.next(confidenceCheckShapes),
+      );
+
+    const shapesChain = parallelShapes.next(shapesPathChoice);
 
     // --- ファイル種別による分岐 ---
     const classifyFile = new tasks.LambdaInvoke(this, 'ClassifyFile', {
