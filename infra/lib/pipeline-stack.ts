@@ -424,6 +424,47 @@ export class PipelineStack extends cdk.Stack {
       return submit;
     };
 
+    // PyMuPDF テキスト等の既存フィールドを保持したまま OCR 結果を $.ocrCheck に合流する
+    // ハイブリッド処理（テキスト抽出 + 画像/グラフ OCR）向け
+    const buildOcrAsyncMerge = (
+      idPrefix: string,
+      inputKeyPath: string,
+      onReady: sfn.IChainable,
+    ): sfn.State => {
+      const submit = new sfn.CustomState(this, `${idPrefix}Submit`, {
+        stateJson: {
+          Type: 'Task',
+          Resource:
+            'arn:aws:states:::aws-sdk:sagemakerruntime:invokeEndpointAsync',
+          Parameters: {
+            EndpointName: props.ocrEndpointName,
+            ContentType: 'application/octet-stream',
+            'InputLocation.$': `States.Format('s3://{}/{}', $.bucket, ${inputKeyPath})`,
+          },
+          ResultPath: '$.ocrAsync',
+        },
+      });
+      const wait = new sfn.Wait(this, `${idPrefix}Wait`, {
+        time: sfn.WaitTime.duration(cdk.Duration.seconds(30)),
+      });
+      // resultPath で既存フィールドを保持したまま OCR チェック結果を $.ocrCheck に格納
+      const check = new tasks.LambdaInvoke(this, `${idPrefix}Check`, {
+        lambdaFunction: readOcrResultFn,
+        resultPath: '$.ocrCheck',
+      });
+      const choice = new sfn.Choice(this, `${idPrefix}ReadyChoice`);
+
+      submit.next(wait);
+      wait.next(check);
+      check.next(
+        choice
+          // resultPath 使用のため Payload でラップされた ocrReady を参照する
+          .when(sfn.Condition.booleanEquals('$.ocrCheck.Payload.ocrReady', true), onReady)
+          .otherwise(wait),
+      );
+      return submit;
+    };
+
     // ========================================
     // Step Functions ワークフロー定義
     // ========================================
@@ -631,10 +672,7 @@ export class PipelineStack extends cdk.Stack {
       payloadResponseOnly: true,
     });
 
-    // --- xlsx-with-shapes パス: Office ファイルは常に PyMuPDF でテキスト抽出する ---
-    // LibreOffice が生成する PDF はデジタル PDF のため OCR より PyMuPDF 直接抽出が正確。
-    // OCR ポーリングループ・confidence 判定・A2I レビューは不要になる。
-
+    // --- xlsx-with-shapes パス: PyMuPDF テキスト抽出必須 + 画像/グラフがあれば OCR も実行 ---
     const extractPdfTextShapes = new tasks.LambdaInvoke(this, 'ExtractPdfTextShapes', {
       lambdaFunction: extractPdfTextFn,
       payloadResponseOnly: true,
@@ -644,16 +682,31 @@ export class PipelineStack extends cdk.Stack {
     parallelShapes.branch(extractExcelShapes);
     parallelShapes.branch(libreOfficeConvert.next(extractPdfTextShapes));
 
-    const mergeShapesPdfText = new sfn.Pass(this, 'MergeShapesPdfText', {
+    // Parallel 後: [$excelShapes, $pdfText] を単一オブジェクトへ展開（画像判定フラグ含む）
+    const preMergeShapes = new sfn.Pass(this, 'PreMergeShapes', {
       parameters: {
         'bucket.$': '$[1].bucket',
         'key.$': '$[1].key',
         'report_id.$': '$[1].report_id',
-        'extractionType': 'excel-pymupdf',
-        'excelData.$': '$[0]',
+        'hasPagesNeedOcr.$': '$[1].hasPagesNeedOcr',
         'pages.$': '$[1].pages',
         'fullText.$': '$[1].fullText',
         'pageCount.$': '$[1].pageCount',
+        'excelData.$': '$[0]',
+      },
+    });
+
+    // --- xlsx OCR なし（テキストのみ） ---
+    const setExcelPdfText = new sfn.Pass(this, 'SetExcelPdfText', {
+      parameters: {
+        'bucket.$': '$.bucket',
+        'key.$': '$.key',
+        'report_id.$': '$.report_id',
+        'extractionType': 'excel-pymupdf',
+        'excelData.$': '$.excelData',
+        'pages.$': '$.pages',
+        'fullText.$': '$.fullText',
+        'pageCount.$': '$.pageCount',
         'confidence': 1.0,
       },
     });
@@ -665,15 +718,57 @@ export class PipelineStack extends cdk.Stack {
       lambdaFunction: storeResultsFn,
       payloadResponseOnly: true,
     });
-    mergeShapesPdfText
+    setExcelPdfText
       .next(normalizeShapesPdfHigh)
       .next(storeShapesPdfHigh)
       .next(makeIndexTask('IndexEmbeddingsShapesPdfHigh'))
       .next(done);
 
-    const shapesChain = parallelShapes.next(mergeShapesPdfText);
+    // --- xlsx ハイブリッド（PyMuPDF テキスト + 画像/グラフ OCR）---
+    const renderPdfImagesShapes = new tasks.LambdaInvoke(this, 'RenderPdfImagesShapes', {
+      lambdaFunction: renderPdfImagesFn,
+      payloadResponseOnly: true,
+    });
+    const ocrShapesHybridReady = new sfn.Pass(this, 'OcrShapesHybridReady');
+    const mergeShapesHybrid = new sfn.Pass(this, 'MergeShapesHybrid', {
+      parameters: {
+        'bucket.$': '$.bucket',
+        'key.$': '$.key',
+        'report_id.$': '$.report_id',
+        'extractionType': 'excel-hybrid',
+        'excelData.$': '$.excelData',
+        'pages.$': '$.pages',
+        'ocrResults.$': '$.ocrCheck.Payload.ocrResults',
+        'confidence': 1.0,
+      },
+    });
+    const normalizeShapesHybrid = new tasks.LambdaInvoke(this, 'NormalizeShapesHybrid', {
+      lambdaFunction: normalizeResultsFn,
+      payloadResponseOnly: true,
+    });
+    const storeShapesHybrid = new tasks.LambdaInvoke(this, 'StoreShapesHybrid', {
+      lambdaFunction: storeResultsFn,
+      payloadResponseOnly: true,
+    });
+    ocrShapesHybridReady
+      .next(mergeShapesHybrid)
+      .next(normalizeShapesHybrid)
+      .next(storeShapesHybrid)
+      .next(makeIndexTask('IndexEmbeddingsShapesHybrid'))
+      .next(done);
+    renderPdfImagesShapes.next(
+      buildOcrAsyncMerge('OcrShapes', '$.key', ocrShapesHybridReady),
+    );
 
-    // --- docx パス: LibreOffice → PyMuPDF テキスト抽出（OCR 不使用）---
+    const shapesOcrCheck = new sfn.Choice(this, 'ShapesOcrCheck')
+      .when(sfn.Condition.booleanEquals('$.hasPagesNeedOcr', true), renderPdfImagesShapes)
+      .otherwise(setExcelPdfText);
+
+    const shapesChain = parallelShapes
+      .next(preMergeShapes)
+      .next(shapesOcrCheck);
+
+    // --- docx パス: PyMuPDF テキスト抽出必須 + 画像/グラフがあれば OCR も実行 ---
     const libreOfficeConvertDocx = new tasks.LambdaInvoke(this, 'LibreOfficeConvertDocx', {
       lambdaFunction: libreOfficeConvertFn,
       payloadResponseOnly: true,
@@ -682,6 +777,8 @@ export class PipelineStack extends cdk.Stack {
       lambdaFunction: extractPdfTextFn,
       payloadResponseOnly: true,
     });
+
+    // --- docx OCR なし（テキストのみ） ---
     const normalizeDocx = new tasks.LambdaInvoke(this, 'NormalizeDocx', {
       lambdaFunction: normalizeResultsFn,
       payloadResponseOnly: true,
@@ -690,12 +787,53 @@ export class PipelineStack extends cdk.Stack {
       lambdaFunction: storeResultsFn,
       payloadResponseOnly: true,
     });
-    const docxChain = libreOfficeConvertDocx
-      .next(extractPdfTextDocx)
-      .next(normalizeDocx)
+    normalizeDocx
       .next(storeDocx)
       .next(makeIndexTask('IndexEmbeddingsDocx'))
       .next(done);
+
+    // --- docx ハイブリッド（PyMuPDF テキスト + 画像/グラフ OCR）---
+    const renderPdfImagesDocx = new tasks.LambdaInvoke(this, 'RenderPdfImagesDocx', {
+      lambdaFunction: renderPdfImagesFn,
+      payloadResponseOnly: true,
+    });
+    const ocrDocxHybridReady = new sfn.Pass(this, 'OcrDocxHybridReady');
+    const mergeDocxHybrid = new sfn.Pass(this, 'MergeDocxHybrid', {
+      parameters: {
+        'bucket.$': '$.bucket',
+        'key.$': '$.key',
+        'report_id.$': '$.report_id',
+        'extractionType': 'pdf-hybrid',
+        'pages.$': '$.pages',
+        'ocrResults.$': '$.ocrCheck.Payload.ocrResults',
+        'confidence': 1.0,
+      },
+    });
+    const normalizeDocxHybrid = new tasks.LambdaInvoke(this, 'NormalizeDocxHybrid', {
+      lambdaFunction: normalizeResultsFn,
+      payloadResponseOnly: true,
+    });
+    const storeDocxHybrid = new tasks.LambdaInvoke(this, 'StoreDocxHybrid', {
+      lambdaFunction: storeResultsFn,
+      payloadResponseOnly: true,
+    });
+    ocrDocxHybridReady
+      .next(mergeDocxHybrid)
+      .next(normalizeDocxHybrid)
+      .next(storeDocxHybrid)
+      .next(makeIndexTask('IndexEmbeddingsDocxHybrid'))
+      .next(done);
+    renderPdfImagesDocx.next(
+      buildOcrAsyncMerge('OcrDocx', '$.key', ocrDocxHybridReady),
+    );
+
+    const docxOcrCheck = new sfn.Choice(this, 'DocxOcrCheck')
+      .when(sfn.Condition.booleanEquals('$.hasPagesNeedOcr', true), renderPdfImagesDocx)
+      .otherwise(normalizeDocx);
+
+    const docxChain = libreOfficeConvertDocx
+      .next(extractPdfTextDocx)
+      .next(docxOcrCheck);
 
     // --- ファイル種別による分岐 ---
     const classifyFile = new tasks.LambdaInvoke(this, 'ClassifyFile', {
