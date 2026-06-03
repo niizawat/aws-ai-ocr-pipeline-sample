@@ -26,6 +26,7 @@ const COLOR_BY_LABEL: Record<string, string> = {
   number: '#64748b',
   footnote: '#64748b',
   reference: '#0d9488',
+  'photo-interpretation': '#d97706',
 };
 
 const FALLBACK = '#0f766e';
@@ -55,6 +56,7 @@ const JP_LABEL: Record<string, string> = {
   number: '番号',
   footnote: '脚注',
   reference: '参照',
+  'photo-interpretation': '写真解釈',
 };
 
 export function blockLabelJa(label: string): string {
