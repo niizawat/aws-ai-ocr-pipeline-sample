@@ -631,108 +631,19 @@ export class PipelineStack extends cdk.Stack {
       payloadResponseOnly: true,
     });
 
-    // OCR ループの「準備完了」到達点（並列ブランチの終端として check 出力を引き継ぐ）
-    const ocrShapesReady = new sfn.Pass(this, 'OcrShapesReady');
-    const ocrShapesSubmit = buildOcrAsync('OcrShapes', '$.key', ocrShapesReady);
+    // --- xlsx-with-shapes パス: Office ファイルは常に PyMuPDF でテキスト抽出する ---
+    // LibreOffice が生成する PDF はデジタル PDF のため OCR より PyMuPDF 直接抽出が正確。
+    // OCR ポーリングループ・confidence 判定・A2I レビューは不要になる。
 
-    // LibreOffice 変換後に PyMuPDF でテキスト品質を判定する（設計書 §7.2 xlsx 適用）。
-    // デジタルテキストが十分（hasPagesNeedOcr=false）なら OCR をスキップし認識精度を向上させる。
     const extractPdfTextShapes = new tasks.LambdaInvoke(this, 'ExtractPdfTextShapes', {
       lambdaFunction: extractPdfTextFn,
       payloadResponseOnly: true,
     });
-    // OCR スキップ時のブランチ終端（Pass のまま ExtractPdfTextShapes 出力を引き継ぐ）
-    const ocrShapesSkipped = new sfn.Pass(this, 'OcrShapesSkipped');
-    extractPdfTextShapes.next(
-      new sfn.Choice(this, 'PdfOcrCheckShapes')
-        .when(
-          sfn.Condition.booleanEquals('$.hasPagesNeedOcr', true),
-          ocrShapesSubmit,
-        )
-        .otherwise(ocrShapesSkipped),
-    );
 
     const parallelShapes = new sfn.Parallel(this, 'ParallelShapesProcessing');
     parallelShapes.branch(extractExcelShapes);
-    parallelShapes.branch(
-      libreOfficeConvert.next(extractPdfTextShapes),
-    );
+    parallelShapes.branch(libreOfficeConvert.next(extractPdfTextShapes));
 
-    // --- OCR 経由マージ（既存: confidence 判定あり）---
-    const mergeResults = new sfn.Pass(this, 'MergeShapesResults', {
-      parameters: {
-        'bucket.$': '$[1].bucket',
-        'key.$': '$[1].key',
-        'report_id.$': '$[1].report_id',
-        'extractionType': 'ocr',
-        'excelData.$': '$[0]',
-        'ocrResults.$': '$[1].ocrResults',
-        'confidence.$': '$[1].confidence',
-      },
-    });
-
-    const normalizeShapesHigh = new tasks.LambdaInvoke(
-      this,
-      'NormalizeShapesHigh',
-      {
-        lambdaFunction: normalizeResultsFn,
-        payloadResponseOnly: true,
-      },
-    );
-    const storeShapesHigh = new tasks.LambdaInvoke(this, 'StoreShapesHigh', {
-      lambdaFunction: storeResultsFn,
-      payloadResponseOnly: true,
-    });
-    const triggerReviewShapes = new tasks.LambdaInvoke(
-      this,
-      'TriggerReviewShapes',
-      {
-        lambdaFunction: triggerReviewFn,
-        integrationPattern: sfn.IntegrationPattern.WAIT_FOR_TASK_TOKEN,
-        payload: sfn.TaskInput.fromObject({
-          taskToken: sfn.JsonPath.taskToken,
-          'input.$': '$',
-        }),
-        heartbeatTimeout: sfn.Timeout.duration(cdk.Duration.hours(48)),
-      },
-    );
-    const normalizeShapesReview = new tasks.LambdaInvoke(
-      this,
-      'NormalizeShapesReview',
-      {
-        lambdaFunction: normalizeResultsFn,
-        payloadResponseOnly: true,
-      },
-    );
-    const storeShapesReview = new tasks.LambdaInvoke(
-      this,
-      'StoreShapesReview',
-      {
-        lambdaFunction: storeResultsFn,
-        payloadResponseOnly: true,
-      },
-    );
-
-    const confidenceCheckShapes = new sfn.Choice(
-      this,
-      'ConfidenceCheckShapes',
-    )
-      .when(
-        sfn.Condition.numberGreaterThanEquals('$.confidence', 0.7),
-        normalizeShapesHigh
-          .next(storeShapesHigh)
-          .next(makeIndexTask('IndexEmbeddingsShapesHigh'))
-          .next(done),
-      )
-      .otherwise(
-        triggerReviewShapes
-          .next(normalizeShapesReview)
-          .next(storeShapesReview)
-          .next(makeIndexTask('IndexEmbeddingsShapesReview'))
-          .next(done),
-      );
-
-    // --- PyMuPDF 経由マージ（OCR スキップ: confidence=1.0 で直行）---
     const mergeShapesPdfText = new sfn.Pass(this, 'MergeShapesPdfText', {
       parameters: {
         'bucket.$': '$[1].bucket',
@@ -760,18 +671,31 @@ export class PipelineStack extends cdk.Stack {
       .next(makeIndexTask('IndexEmbeddingsShapesPdfHigh'))
       .next(done);
 
-    // Parallel 後: Branch1 が PyMuPDF 経路（OcrShapesSkipped）かを判別する。
-    // OCR 経路（invoke-ocr 出力）には hasPagesNeedOcr が存在しないため isPresent で判定する。
-    const shapesPathChoice = new sfn.Choice(this, 'ShapesPathChoice')
-      .when(
-        sfn.Condition.isPresent('$[1].hasPagesNeedOcr'),
-        mergeShapesPdfText,
-      )
-      .otherwise(
-        mergeResults.next(confidenceCheckShapes),
-      );
+    const shapesChain = parallelShapes.next(mergeShapesPdfText);
 
-    const shapesChain = parallelShapes.next(shapesPathChoice);
+    // --- docx パス: LibreOffice → PyMuPDF テキスト抽出（OCR 不使用）---
+    const libreOfficeConvertDocx = new tasks.LambdaInvoke(this, 'LibreOfficeConvertDocx', {
+      lambdaFunction: libreOfficeConvertFn,
+      payloadResponseOnly: true,
+    });
+    const extractPdfTextDocx = new tasks.LambdaInvoke(this, 'ExtractPdfTextDocx', {
+      lambdaFunction: extractPdfTextFn,
+      payloadResponseOnly: true,
+    });
+    const normalizeDocx = new tasks.LambdaInvoke(this, 'NormalizeDocx', {
+      lambdaFunction: normalizeResultsFn,
+      payloadResponseOnly: true,
+    });
+    const storeDocx = new tasks.LambdaInvoke(this, 'StoreDocx', {
+      lambdaFunction: storeResultsFn,
+      payloadResponseOnly: true,
+    });
+    const docxChain = libreOfficeConvertDocx
+      .next(extractPdfTextDocx)
+      .next(normalizeDocx)
+      .next(storeDocx)
+      .next(makeIndexTask('IndexEmbeddingsDocx'))
+      .next(done);
 
     // --- ファイル種別による分岐 ---
     const classifyFile = new tasks.LambdaInvoke(this, 'ClassifyFile', {
@@ -782,10 +706,8 @@ export class PipelineStack extends cdk.Stack {
     const fileTypeChoice = new sfn.Choice(this, 'FileTypeChoice')
       .when(sfn.Condition.stringEquals('$.fileType', 'digital-pdf'), pdfChain)
       .when(sfn.Condition.stringEquals('$.fileType', 'scan-pdf'), scanPdfChain)
-      .when(
-        sfn.Condition.stringEquals('$.fileType', 'xlsx-with-shapes'),
-        shapesChain,
-      )
+      .when(sfn.Condition.stringEquals('$.fileType', 'xlsx-with-shapes'), shapesChain)
+      .when(sfn.Condition.stringEquals('$.fileType', 'docx'), docxChain)
       .otherwise(
         new sfn.Fail(this, 'UnsupportedFileType', {
           cause: 'Unsupported file type',

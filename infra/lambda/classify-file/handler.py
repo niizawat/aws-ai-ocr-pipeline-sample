@@ -107,9 +107,13 @@ def handler(event, context):
             has_shapes = any(
                 name.startswith("xl/drawings/") for name in zf.namelist()
             )
-        # すべての Excel は LibreOffice → PDF → OCR 経路で処理する
+        # すべての Excel は LibreOffice → PyMuPDF 経路で処理する
         result["fileType"] = "xlsx-with-shapes"
         result["hasDrawings"] = has_shapes
+
+    elif ext in (".docx", ".doc"):
+        # Word ファイル: LibreOffice → PyMuPDF テキスト抽出
+        result["fileType"] = "docx"
 
     else:
         result["fileType"] = "unknown"
