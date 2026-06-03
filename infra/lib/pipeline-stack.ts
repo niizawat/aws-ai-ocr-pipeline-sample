@@ -724,21 +724,33 @@ export class PipelineStack extends cdk.Stack {
       .next(makeIndexTask('IndexEmbeddingsShapesPdfHigh'))
       .next(done);
 
-    // --- xlsx ハイブリッド（PyMuPDF テキスト + 画像/グラフ OCR）---
+    // --- xlsx ハイブリッド（PyMuPDF テキスト + 画像/グラフ OCR + LLM 写真解釈）---
+    // OCR と写真解釈を並列実行し、scan-pdf と同等の品質を実現する（設計書 §4 パイプライン）
     const renderPdfImagesShapes = new tasks.LambdaInvoke(this, 'RenderPdfImagesShapes', {
       lambdaFunction: renderPdfImagesFn,
       payloadResponseOnly: true,
     });
+    // OCR ブランチ: ocrShapesHybridReady はブランチ終端（.next() なし）
     const ocrShapesHybridReady = new sfn.Pass(this, 'OcrShapesHybridReady');
+    // 写真解釈ブランチ
+    const interpretPhotoShapes = new tasks.LambdaInvoke(this, 'InterpretPhotoShapes', {
+      lambdaFunction: interpretPhotoFn,
+      payloadResponseOnly: true,
+    });
+    const parallelShapesHybrid = new sfn.Parallel(this, 'ParallelShapesHybrid');
+    parallelShapesHybrid.branch(buildOcrAsyncMerge('OcrShapes', '$.key', ocrShapesHybridReady));
+    parallelShapesHybrid.branch(interpretPhotoShapes);
+
     const mergeShapesHybrid = new sfn.Pass(this, 'MergeShapesHybrid', {
       parameters: {
-        'bucket.$': '$.bucket',
-        'key.$': '$.key',
-        'report_id.$': '$.report_id',
+        'bucket.$': '$[0].bucket',
+        'key.$': '$[0].key',
+        'report_id.$': '$[0].report_id',
         'extractionType': 'excel-hybrid',
-        'excelData.$': '$.excelData',
-        'pages.$': '$.pages',
-        'ocrResults.$': '$.ocrCheck.Payload.ocrResults',
+        'excelData.$': '$[0].excelData',
+        'pages.$': '$[0].pages',
+        'ocrResults.$': '$[0].ocrCheck.Payload.ocrResults',
+        'photoInterpretations.$': '$[1].photoInterpretations',
         'confidence': 1.0,
       },
     });
@@ -750,15 +762,13 @@ export class PipelineStack extends cdk.Stack {
       lambdaFunction: storeResultsFn,
       payloadResponseOnly: true,
     });
-    ocrShapesHybridReady
+    renderPdfImagesShapes
+      .next(parallelShapesHybrid)
       .next(mergeShapesHybrid)
       .next(normalizeShapesHybrid)
       .next(storeShapesHybrid)
       .next(makeIndexTask('IndexEmbeddingsShapesHybrid'))
       .next(done);
-    renderPdfImagesShapes.next(
-      buildOcrAsyncMerge('OcrShapes', '$.key', ocrShapesHybridReady),
-    );
 
     const shapesOcrCheck = new sfn.Choice(this, 'ShapesOcrCheck')
       .when(sfn.Condition.booleanEquals('$.hasPagesNeedOcr', true), renderPdfImagesShapes)
@@ -792,20 +802,29 @@ export class PipelineStack extends cdk.Stack {
       .next(makeIndexTask('IndexEmbeddingsDocx'))
       .next(done);
 
-    // --- docx ハイブリッド（PyMuPDF テキスト + 画像/グラフ OCR）---
+    // --- docx ハイブリッド（PyMuPDF テキスト + 画像/グラフ OCR + LLM 写真解釈）---
     const renderPdfImagesDocx = new tasks.LambdaInvoke(this, 'RenderPdfImagesDocx', {
       lambdaFunction: renderPdfImagesFn,
       payloadResponseOnly: true,
     });
     const ocrDocxHybridReady = new sfn.Pass(this, 'OcrDocxHybridReady');
+    const interpretPhotoDocx = new tasks.LambdaInvoke(this, 'InterpretPhotoDocx', {
+      lambdaFunction: interpretPhotoFn,
+      payloadResponseOnly: true,
+    });
+    const parallelDocxHybrid = new sfn.Parallel(this, 'ParallelDocxHybrid');
+    parallelDocxHybrid.branch(buildOcrAsyncMerge('OcrDocx', '$.key', ocrDocxHybridReady));
+    parallelDocxHybrid.branch(interpretPhotoDocx);
+
     const mergeDocxHybrid = new sfn.Pass(this, 'MergeDocxHybrid', {
       parameters: {
-        'bucket.$': '$.bucket',
-        'key.$': '$.key',
-        'report_id.$': '$.report_id',
+        'bucket.$': '$[0].bucket',
+        'key.$': '$[0].key',
+        'report_id.$': '$[0].report_id',
         'extractionType': 'pdf-hybrid',
-        'pages.$': '$.pages',
-        'ocrResults.$': '$.ocrCheck.Payload.ocrResults',
+        'pages.$': '$[0].pages',
+        'ocrResults.$': '$[0].ocrCheck.Payload.ocrResults',
+        'photoInterpretations.$': '$[1].photoInterpretations',
         'confidence': 1.0,
       },
     });
@@ -817,15 +836,13 @@ export class PipelineStack extends cdk.Stack {
       lambdaFunction: storeResultsFn,
       payloadResponseOnly: true,
     });
-    ocrDocxHybridReady
+    renderPdfImagesDocx
+      .next(parallelDocxHybrid)
       .next(mergeDocxHybrid)
       .next(normalizeDocxHybrid)
       .next(storeDocxHybrid)
       .next(makeIndexTask('IndexEmbeddingsDocxHybrid'))
       .next(done);
-    renderPdfImagesDocx.next(
-      buildOcrAsyncMerge('OcrDocx', '$.key', ocrDocxHybridReady),
-    );
 
     const docxOcrCheck = new sfn.Choice(this, 'DocxOcrCheck')
       .when(sfn.Condition.booleanEquals('$.hasPagesNeedOcr', true), renderPdfImagesDocx)
