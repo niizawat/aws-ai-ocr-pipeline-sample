@@ -37,14 +37,28 @@ def handler(event, context):
 
     elif extraction_type == "pdf-text":
         for page in event.get("pages", []):
+            page_number = page["pageNumber"]
             sections.append(
                 {
-                    "sectionId": f"page{page['pageNumber']}",
+                    "sectionId": f"page{page_number}",
                     "sectionType": "pdf-page",
-                    "pageNumber": page["pageNumber"],
+                    "pageNumber": page_number,
                     "content": page["text"],
+                    # OCR 品質情報（Phase 2 のフォールバック判定に利用）
+                    "needsOcr": page.get("needsOcr", False),
+                    "ocrReason": page.get("ocrReason"),
                 }
             )
+            # 表が抽出されていればセクションを追加（後方互換: tables キー無しは無視）
+            for table_idx, table_md in enumerate(page.get("tables", [])):
+                sections.append(
+                    {
+                        "sectionId": f"page{page_number}-table{table_idx + 1}",
+                        "sectionType": "pdf-table",
+                        "pageNumber": page_number,
+                        "content": table_md,
+                    }
+                )
 
     elif extraction_type == "ocr":
         # PaddleOCR-VL のレイアウト種別（text/table/chart/formula/image 等）を

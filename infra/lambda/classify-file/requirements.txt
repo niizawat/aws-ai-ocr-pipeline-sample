@@ -1,0 +1,3 @@
+# バイト列検査から PyMuPDF ベースのページ品質判定に置き換え
+# pymupdf4llm は不要（テキスト抽出のみ使用）。extract-pdf-text と版を統一する。
+pymupdf==1.27.2.3

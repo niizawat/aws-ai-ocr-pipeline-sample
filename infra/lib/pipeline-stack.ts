@@ -113,13 +113,20 @@ export class PipelineStack extends cdk.Stack {
       securityGroups: [props.lambdaSg],
     };
 
+    // PyMuPDF でページ品質を確認するためネイティブ依存が必要。
+    // テキスト抽出のみ（画像化なし）なので 512MB で十分（設計書 §Phase3 注記）。
     const classifyFileFn = new lambda.Function(this, 'ClassifyFileFn', {
       ...lambdaDefaults,
       functionName: `${projectName}-classify-file`,
+      architecture: lambda.Architecture.ARM_64,
       handler: 'handler.handler',
-      code: lambda.Code.fromAsset(path.join(__dirname, '../lambda/classify-file')),
+      code: pythonRequirementsAsset(
+        path.join(__dirname, '../lambda/classify-file'),
+        PYTHON_RUNTIME,
+        'linux/arm64',
+      ),
       timeout: cdk.Duration.seconds(60),
-      memorySize: 256,
+      memorySize: 512,
       environment: {
         REPORT_BUCKET: props.reportBucket.bucketName,
       },
@@ -142,16 +149,20 @@ export class PipelineStack extends cdk.Stack {
     });
     props.reportBucket.grantRead(extractExcelFn);
 
+    // PyMuPDF + pymupdf4llm + numpy はネイティブ依存かつ大容量のため
+    // render-pdf-images と同様に arm64 固定・メモリ増量する（設計書 §7.2 注意点）。
     const extractPdfTextFn = new lambda.Function(this, 'ExtractPdfTextFn', {
       ...lambdaDefaults,
       functionName: `${projectName}-extract-pdf-text`,
+      architecture: lambda.Architecture.ARM_64,
       handler: 'handler.handler',
       code: pythonRequirementsAsset(
         path.join(__dirname, '../lambda/extract-pdf-text'),
         PYTHON_RUNTIME,
+        'linux/arm64',
       ),
       timeout: cdk.Duration.seconds(300),
-      memorySize: 512,
+      memorySize: 1024,
       environment: {
         REPORT_BUCKET: props.reportBucket.bucketName,
       },
@@ -432,6 +443,8 @@ export class PipelineStack extends cdk.Stack {
       lambdaFunction: extractPdfTextFn,
       payloadResponseOnly: true,
     });
+
+    // --- digital-pdf: 品質 OK 経路（PyMuPDF テキスト直行） ---
     const normalizePdf = new tasks.LambdaInvoke(this, 'NormalizePdf', {
       lambdaFunction: normalizeResultsFn,
       payloadResponseOnly: true,
@@ -440,11 +453,88 @@ export class PipelineStack extends cdk.Stack {
       lambdaFunction: storeResultsFn,
       payloadResponseOnly: true,
     });
-    const pdfChain = extractPdfText
-      .next(normalizePdf)
-      .next(storePdf)
-      .next(makeIndexTask('IndexEmbeddingsPdf'))
-      .next(done);
+
+    // --- digital-pdf: OCR フォールバック経路（設計書 §7.2 ハイブリッドルーティング）---
+    // analyze_page() が needs_ocr=true と判定したページが存在する場合、
+    // scan-pdf と同じ OCR 非同期ループを再利用して全ページを OCR 処理する。
+    // render-pdf-images → buildOcrAsync → confidence 判定 → normalize/store/index
+    const normalizePdfFallbackHigh = new tasks.LambdaInvoke(this, 'NormalizePdfFallbackHigh', {
+      lambdaFunction: normalizeResultsFn,
+      payloadResponseOnly: true,
+    });
+    const storePdfFallbackHigh = new tasks.LambdaInvoke(this, 'StorePdfFallbackHigh', {
+      lambdaFunction: storeResultsFn,
+      payloadResponseOnly: true,
+    });
+    const triggerReviewPdfFallback = new tasks.LambdaInvoke(
+      this,
+      'TriggerReviewPdfFallback',
+      {
+        lambdaFunction: triggerReviewFn,
+        integrationPattern: sfn.IntegrationPattern.WAIT_FOR_TASK_TOKEN,
+        payload: sfn.TaskInput.fromObject({
+          taskToken: sfn.JsonPath.taskToken,
+          'input.$': '$',
+        }),
+        heartbeatTimeout: sfn.Timeout.duration(cdk.Duration.hours(48)),
+      },
+    );
+    const normalizePdfFallbackReview = new tasks.LambdaInvoke(
+      this,
+      'NormalizePdfFallbackReview',
+      {
+        lambdaFunction: normalizeResultsFn,
+        payloadResponseOnly: true,
+      },
+    );
+    const storePdfFallbackReview = new tasks.LambdaInvoke(this, 'StorePdfFallbackReview', {
+      lambdaFunction: storeResultsFn,
+      payloadResponseOnly: true,
+    });
+
+    const confidenceCheckPdfFallback = new sfn.Choice(this, 'ConfidenceCheckPdfFallback')
+      .when(
+        sfn.Condition.numberGreaterThanEquals('$.confidence', 0.7),
+        normalizePdfFallbackHigh
+          .next(storePdfFallbackHigh)
+          .next(makeIndexTask('IndexEmbeddingsPdfFallbackHigh'))
+          .next(done),
+      )
+      .otherwise(
+        triggerReviewPdfFallback
+          .next(normalizePdfFallbackReview)
+          .next(storePdfFallbackReview)
+          .next(makeIndexTask('IndexEmbeddingsPdfFallbackReview'))
+          .next(done),
+      );
+
+    // OCR ポーリングが完了したら confidence 判定へ（scan-pdf の OcrScanReady に相当）
+    const ocrPdfFallbackReady = new sfn.Pass(this, 'OcrPdfFallbackReady');
+    ocrPdfFallbackReady.next(confidenceCheckPdfFallback);
+
+    // RenderPdfImagesFallback: scan-pdf の RenderPdfImagesScan と同じ Lambda を別ステートで再利用
+    const renderPdfImagesFallback = new tasks.LambdaInvoke(this, 'RenderPdfImagesFallback', {
+      lambdaFunction: renderPdfImagesFn,
+      payloadResponseOnly: true,
+    });
+    renderPdfImagesFallback.next(
+      buildOcrAsync('OcrPdfFallback', '$.key', ocrPdfFallbackReady),
+    );
+
+    // pdfOcrCheck: hasPagesNeedOcr フラグで経路を切り替える
+    const pdfOcrCheck = new sfn.Choice(this, 'PdfOcrCheck')
+      .when(
+        sfn.Condition.booleanEquals('$.hasPagesNeedOcr', true),
+        renderPdfImagesFallback,
+      )
+      .otherwise(
+        normalizePdf
+          .next(storePdf)
+          .next(makeIndexTask('IndexEmbeddingsPdf'))
+          .next(done),
+      );
+
+    const pdfChain = extractPdfText.next(pdfOcrCheck);
 
     // --- scan-pdf パス ---
     const normalizeOcrHigh = new tasks.LambdaInvoke(this, 'NormalizeOcrHigh', {

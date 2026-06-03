@@ -1,1 +1,2 @@
-pymupdf==1.25.5
+# extract-pdf-text の pymupdf4llm==1.27.2.3 に合わせてバージョンを統一
+pymupdf==1.27.2.3

@@ -22,6 +22,54 @@ def _derive_report_id(key: str) -> str:
     return f"report_{digest}"
 
 
+def _classify_pdf(body: bytes) -> str:
+    """PyMuPDF でページテキスト品質を判定し digital-pdf / scan-pdf を返す。
+
+    判定基準（設計書 §5 に準拠）:
+    - 全ページのうち 50% 以上が「十分なテキストあり + 不正文字率 < 5%」
+      → digital-pdf（PyMuPDF テキスト抽出が有効）
+    - それ以外 → scan-pdf（PaddleOCR フォールバック）
+
+    旧実装はバイト列に `/Type /Page`・`BT`・`Tj` があるかのみを確認していたため、
+    CID フォント等で文字化けするデジタル PDF を誤って digital-pdf に分類していた。
+    PyMuPDF では実際のテキスト品質を確認するため、誤分類を大幅に削減できる。
+    """
+    try:
+        import fitz
+    except ImportError:
+        # フォールバック: 旧バイト列検査
+        has_text = b"/Type /Page" in body and b"BT" in body and b"Tj" in body
+        return "digital-pdf" if has_text else "scan-pdf"
+
+    try:
+        doc = fitz.open(stream=body, filetype="pdf")
+    except Exception:  # noqa: BLE001
+        return "scan-pdf"
+
+    total_pages = len(doc)
+    if total_pages == 0:
+        doc.close()
+        return "scan-pdf"
+
+    digital_pages = 0
+    for page in doc:
+        text = page.get_text()
+        total_chars = len(text)
+        if total_chars < 20:
+            # テキストが極端に少ない → スキャンページ候補
+            continue
+        bad_chars = text.count("�")
+        bad_ratio = bad_chars / total_chars
+        if bad_ratio < 0.05:
+            # 十分なテキストかつ不正文字率が低い → デジタルページと判定
+            digital_pages += 1
+
+    doc.close()
+
+    # 過半数のページがデジタルページなら digital-pdf
+    return "digital-pdf" if digital_pages / total_pages >= 0.5 else "scan-pdf"
+
+
 def _normalize_event(event):
     """EventBridge Pipe (SQS) は単一メッセージでも配列で渡すため正規化する。"""
     if isinstance(event, list):
@@ -50,8 +98,7 @@ def handler(event, context):
     if ext == ".pdf":
         obj = s3.get_object(Bucket=bucket, Key=key)
         body = obj["Body"].read()
-        has_text = b"/Type /Page" in body and b"BT" in body and b"Tj" in body
-        result["fileType"] = "digital-pdf" if has_text else "scan-pdf"
+        result["fileType"] = _classify_pdf(body)
 
     elif ext == ".xlsx":
         obj = s3.get_object(Bucket=bucket, Key=key)

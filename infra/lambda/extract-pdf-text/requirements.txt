@@ -1,1 +1,5 @@
-pypdf>=4.0.0,<5.0.0
+# PyMuPDF 統合: テキスト抽出・表検出・ページ品質判定（OCR 要否）
+# pymupdf4llm が pymupdf==1.27.2.3 / pymupdf_layout==1.27.2.3 を完全固定で引き込む
+pymupdf4llm==1.27.2.3
+# analyze_page() が numpy を使用するため明示指定
+numpy
