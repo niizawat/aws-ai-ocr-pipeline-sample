@@ -902,7 +902,7 @@ export class PipelineStack extends cdk.Stack {
                 body: {
                   detail: {
                     object: {
-                      key: [{ suffix: '.xlsx' }, { suffix: '.pdf' }],
+                      key: [{ suffix: '.xlsx' }, { suffix: '.pdf' }, { suffix: '.docx' }, { suffix: '.doc' }],
                     },
                   },
                 },
