@@ -125,16 +125,21 @@ export async function getOcrPreview(reportId: string): Promise<OcrPreview> {
     blocksByPage.set(page, list);
   });
 
-  // photo-interpretation セクションを bbox なしブロックとして追加
-  const photoSections = (normalized?.sections ?? []).filter(
-    (s) => s.sectionType === 'photo-interpretation',
-  );
-  for (const section of photoSections) {
+  // photo-interpretation / pdf-page / pdf-table セクションを bbox なしブロックとして追加
+  const TARGET_TYPES = new Set(['photo-interpretation', 'pdf-page', 'pdf-table']);
+  for (const section of normalized?.sections ?? []) {
+    if (!TARGET_TYPES.has(section.sectionType ?? '')) continue;
     const page = section.pageNumber ?? 1;
+    const label =
+      section.sectionType === 'photo-interpretation'
+        ? 'photo-interpretation'
+        : section.sectionType === 'pdf-table'
+          ? 'pdf-table'
+          : 'pdf-page';
     const block: OcrPreviewBlock = {
-      id: section.sectionId ?? `photo-${page}`,
+      id: section.sectionId ?? `${label}-${page}`,
       page,
-      label: 'photo-interpretation',
+      label,
       text: section.content ?? '',
       bbox: null,
       confidence: null,
