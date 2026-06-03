@@ -97,17 +97,7 @@ def handler(event, context):
                         "confidence": region.get("confidence"),
                     }
                 )
-        # 写真の意味解釈（Bedrock Kimi K2.5）を photo-interpretation セクションへ
-        for photo in event.get("photoInterpretations", []):
-            page = photo.get("page", 0)
-            sections.append(
-                {
-                    "sectionId": f"photo-page{page}",
-                    "sectionType": "photo-interpretation",
-                    "pageNumber": page,
-                    "content": photo.get("interpretation", ""),
-                }
-            )
+        # photoInterpretations は後段の汎用ハンドラ（全 extractionType 共通）で処理する
 
     elif extraction_type == "excel-pymupdf":
         # LibreOffice 変換後に PyMuPDF でテキスト抽出した経路（OCR スキップ）。
