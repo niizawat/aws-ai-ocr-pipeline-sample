@@ -1,0 +1,290 @@
+<mxfile host="app.diagrams.net" modified="2026-05-31T07:46:00.000Z" agent="Codex" version="24.7.17" type="device">
+  <diagram id="quality-report-cdk-platform" name="Quality Report CDK Platform">
+    <mxGraphModel dx="1600" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="3000" pageHeight="1800" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" value="背景" parent="0" />
+        <mxCell id="layer-0" value="アカウント/リージョン" parent="0" />
+        <mxCell id="layer-1" value="ネットワーク" parent="0" />
+        <mxCell id="layer-2" value="セキュリティ" parent="0" />
+        <mxCell id="layer-3" value="アプリケーション" parent="0" />
+        <mxCell id="layer-4" value="データ" parent="0" />
+        <mxCell id="layer-5" value="監視・運用" parent="0" />
+
+        <mxCell id="title-main" value="Quality Report Platform&#10;CDK Codebase Analysis Architecture" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=22;fontStyle=1;" vertex="1" parent="layer-0">
+          <mxGeometry x="220" y="8" width="900" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle-main" value="Theme: light-dark / 120x120 container + 48x48 icon / Step-badge legend included" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontStyle=0;" vertex="1" parent="layer-0">
+          <mxGeometry x="220" y="52" width="1100" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="account-main" value="AWS Account&#10;factory-creative-camp-2026" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=2;fillColor=#f8fafc;strokeColor=#94a3b8;fontFamily=Helvetica;fontSize=14;fontStyle=1;verticalAlign=top;align=left;spacingTop=12;spacingLeft=12;" vertex="1" parent="layer-0">
+          <mxGeometry x="200" y="40" width="2400" height="1450" as="geometry" />
+        </mxCell>
+        <mxCell id="region-main" value="Region: us-east-1" style="rounded=1;whiteSpace=wrap;html=1;strokeWidth=1;fillColor=#ffffff;strokeColor=#cbd5e1;fontFamily=Helvetica;fontSize=13;fontStyle=1;verticalAlign=top;align=left;spacingTop=10;spacingLeft=10;" vertex="1" parent="layer-0">
+          <mxGeometry x="260" y="100" width="2280" height="1330" as="geometry" />
+        </mxCell>
+
+        <mxCell id="user-client" value="Business User&#10;(Browser)" style="shape=mxgraph.aws4.user;verticalLabelPosition=bottom;verticalAlign=top;labelBackgroundColor=none;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="layer-3">
+          <mxGeometry x="40" y="120" width="48" height="48" as="geometry" />
+        </mxCell>
+
+        <mxCell id="route53-global" value="Route 53&#10;Public DNS" style="shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.route_53;verticalLabelPosition=bottom;verticalAlign=top;labelBackgroundColor=none;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="layer-3">
+          <mxGeometry x="280" y="300" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="waf-global" value="AWS WAF&#10;Managed Rules" style="shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.waf;verticalLabelPosition=bottom;verticalAlign=top;labelBackgroundColor=none;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="layer-2">
+          <mxGeometry x="280" y="480" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="cloudfront-global" value="CloudFront&#10;HTTPS Edge" style="shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.cloudfront;verticalLabelPosition=bottom;verticalAlign=top;labelBackgroundColor=none;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="layer-3">
+          <mxGeometry x="280" y="660" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="apigw-global" value="API Gateway HTTP API&#10;JWT Authorizer" style="shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.api_gateway;verticalLabelPosition=bottom;verticalAlign=top;labelBackgroundColor=none;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="layer-3">
+          <mxGeometry x="280" y="840" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="cognito-auth" value="Cognito&#10;User Pool + Hosted UI" style="shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.cognito;verticalLabelPosition=bottom;verticalAlign=top;labelBackgroundColor=none;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="layer-2">
+          <mxGeometry x="280" y="1020" width="48" height="48" as="geometry" />
+        </mxCell>
+
+        <mxCell id="vpc-main" value="VPC&#10;Public + Private + Isolated" style="points=[[0,0],[0.25,0],[0.5,0],[0.75,0],[1,0],[1,0.25],[1,0.5],[1,0.75],[1,1],[0.75,1],[0.5,1],[0.25,1],[0,1],[0,0.75],[0,0.5],[0,0.25]];shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_vpc2;grStroke=1;verticalLabelPosition=top;verticalAlign=bottom;labelBackgroundColor=none;fontFamily=Helvetica;fontSize=12;fontStyle=1;" vertex="1" parent="layer-1">
+          <mxGeometry x="500" y="180" width="1450" height="1120" as="geometry" />
+        </mxCell>
+
+        <mxCell id="subnet-public" value="Public Subnet&#10;(Event ingress)" style="rounded=1;whiteSpace=wrap;html=1;strokeColor=#E7157B;fillColor=#FCE4EC;fontFamily=Helvetica;fontSize=11;fontStyle=1;verticalAlign=top;align=left;spacingTop=8;spacingLeft=8;" vertex="1" parent="vpc-main">
+          <mxGeometry x="60" y="80" width="430" height="380" as="geometry" />
+        </mxCell>
+        <mxCell id="subnet-private-pipeline" value="Private Subnet A&#10;(Pipeline + OCR)" style="rounded=1;whiteSpace=wrap;html=1;strokeColor=#01A88D;fillColor=#E0F2F1;fontFamily=Helvetica;fontSize=11;fontStyle=1;verticalAlign=top;align=left;spacingTop=8;spacingLeft=8;" vertex="1" parent="vpc-main">
+          <mxGeometry x="560" y="80" width="430" height="380" as="geometry" />
+        </mxCell>
+        <mxCell id="subnet-private-analytics" value="Private Subnet B&#10;(Analytics app)" style="rounded=1;whiteSpace=wrap;html=1;strokeColor=#8C4FFF;fillColor=#EDE7F6;fontFamily=Helvetica;fontSize=11;fontStyle=1;verticalAlign=top;align=left;spacingTop=8;spacingLeft=8;" vertex="1" parent="vpc-main">
+          <mxGeometry x="1060" y="80" width="330" height="380" as="geometry" />
+        </mxCell>
+        <mxCell id="subnet-data" value="Isolated / Data Zone" style="rounded=1;whiteSpace=wrap;html=1;strokeColor=#3F8624;fillColor=#E8F5E9;fontFamily=Helvetica;fontSize=11;fontStyle=1;verticalAlign=top;align=left;spacingTop=8;spacingLeft=8;" vertex="1" parent="vpc-main">
+          <mxGeometry x="560" y="520" width="830" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="subnet-ops" value="Ops / Build Zone" style="rounded=1;whiteSpace=wrap;html=1;strokeColor=#8C4FFF;fillColor=#EDE7F6;fontFamily=Helvetica;fontSize=11;fontStyle=1;verticalAlign=top;align=left;spacingTop=8;spacingLeft=8;" vertex="1" parent="vpc-main">
+          <mxGeometry x="60" y="880" width="1330" height="200" as="geometry" />
+        </mxCell>
+
+        <mxCell id="eventbridge-bus" value="EventBridge Rule&#10;S3 Object Created(raw/)" style="shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.eventbridge;verticalLabelPosition=bottom;verticalAlign=top;labelBackgroundColor=none;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="subnet-public">
+          <mxGeometry x="60" y="60" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="sqs-queue" value="SQS + DLQ&#10;processing-queue" style="shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.simple_queue_service;verticalLabelPosition=bottom;verticalAlign=top;labelBackgroundColor=none;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="subnet-public">
+          <mxGeometry x="260" y="60" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="eventbridge-pipe" value="EventBridge Pipe&#10;SQS to Step Functions" style="shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.eventbridge_pipes;verticalLabelPosition=bottom;verticalAlign=top;labelBackgroundColor=none;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="subnet-public">
+          <mxGeometry x="60" y="240" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="stepfunctions-sm" value="Step Functions&#10;file-processing" style="shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.step_functions;verticalLabelPosition=bottom;verticalAlign=top;labelBackgroundColor=none;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="subnet-public">
+          <mxGeometry x="260" y="240" width="48" height="48" as="geometry" />
+        </mxCell>
+
+        <mxCell id="lambda-pipeline" value="Lambda Functions&#10;classify/extract/store" style="shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;verticalLabelPosition=bottom;verticalAlign=top;labelBackgroundColor=none;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="layer-3">
+          <mxGeometry x="1180" y="320" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="sagemaker-ocr" value="SageMaker Async&#10;PaddleOCR-VL Endpoint" style="shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.sagemaker;verticalLabelPosition=bottom;verticalAlign=top;labelBackgroundColor=none;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="subnet-private-pipeline">
+          <mxGeometry x="260" y="60" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="sagemaker-a2i" value="SageMaker A2I&#10;Human Review Flow" style="shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.sagemaker_ground_truth;verticalLabelPosition=bottom;verticalAlign=top;labelBackgroundColor=none;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="subnet-private-pipeline">
+          <mxGeometry x="60" y="240" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="bedrock-kimi" value="Bedrock&#10;Kimi K2.5 Photo Interpretation" style="shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.bedrock;verticalLabelPosition=bottom;verticalAlign=top;labelBackgroundColor=none;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="subnet-private-pipeline">
+          <mxGeometry x="260" y="240" width="48" height="48" as="geometry" />
+        </mxCell>
+
+        <mxCell id="cloudmap-sd" value="Cloud Map&#10;private service discovery" style="shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.cloud_map;verticalLabelPosition=bottom;verticalAlign=top;labelBackgroundColor=none;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="subnet-private-analytics">
+          <mxGeometry x="60" y="60" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="ecs-streamlit" value="ECS Fargate&#10;Streamlit analytics app" style="shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.ecs;verticalLabelPosition=bottom;verticalAlign=top;labelBackgroundColor=none;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="layer-3">
+          <mxGeometry x="1620" y="500" width="48" height="48" as="geometry" />
+        </mxCell>
+
+        <mxCell id="s3-report" value="S3 Report Bucket&#10;raw/images/results/review" style="shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.s3;verticalLabelPosition=bottom;verticalAlign=top;labelBackgroundColor=none;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="layer-4">
+          <mxGeometry x="1120" y="760" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="dynamodb-report" value="DynamoDB&#10;report metadata/status" style="shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.dynamodb;verticalLabelPosition=bottom;verticalAlign=top;labelBackgroundColor=none;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="layer-4">
+          <mxGeometry x="1320" y="760" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="s3vectors-index" value="S3 Vectors&#10;report-embeddings index" style="shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.s3;verticalLabelPosition=bottom;verticalAlign=top;labelBackgroundColor=none;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="layer-4">
+          <mxGeometry x="1520" y="760" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="cloudwatch-ops" value="CloudWatch Logs&#10;Flow/State/ECS Logs" style="shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.cloudwatch;verticalLabelPosition=bottom;verticalAlign=top;labelBackgroundColor=none;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="layer-5">
+          <mxGeometry x="1120" y="1240" width="48" height="48" as="geometry" />
+        </mxCell>
+
+        <mxCell id="ecr-images" value="ECR Repositories&#10;ocr/libreoffice/streamlit" style="shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.ecr;verticalLabelPosition=bottom;verticalAlign=top;labelBackgroundColor=none;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="subnet-ops">
+          <mxGeometry x="60" y="60" width="48" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="codebuild-build" value="CodeBuild&#10;container image build" style="shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.codebuild;verticalLabelPosition=bottom;verticalAlign=top;labelBackgroundColor=none;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="subnet-ops">
+          <mxGeometry x="260" y="60" width="48" height="48" as="geometry" />
+        </mxCell>
+
+        <mxCell id="sidebar-legend" value="Step Legend&#10;Data &amp; Access Flow" style="rounded=1;whiteSpace=wrap;html=1;strokeColor=#64748b;fillColor=#f8fafc;fontFamily=Helvetica;fontSize=12;fontStyle=1;verticalAlign=top;align=left;spacingTop=10;spacingLeft=10;" vertex="1" parent="layer-3">
+          <mxGeometry x="1980" y="220" width="520" height="980" as="geometry" />
+        </mxCell>
+
+        <mxCell id="badge-1" value="1" style="ellipse;whiteSpace=wrap;html=1;strokeColor=#0f172a;fillColor=#dbeafe;fontFamily=Helvetica;fontSize=11;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="layer-3">
+          <mxGeometry x="2010" y="280" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-1" value="DNS / Edge: Route53 → WAF → CloudFront" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="layer-3">
+          <mxGeometry x="2045" y="282" width="430" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="badge-2" value="2" style="ellipse;whiteSpace=wrap;html=1;strokeColor=#0f172a;fillColor=#dcfce7;fontFamily=Helvetica;fontSize=11;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="layer-3">
+          <mxGeometry x="2010" y="340" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-2" value="Auth: CloudFront / API Gateway with Cognito JWT" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="layer-3">
+          <mxGeometry x="2045" y="342" width="430" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="badge-3" value="3" style="ellipse;whiteSpace=wrap;html=1;strokeColor=#0f172a;fillColor=#fef3c7;fontFamily=Helvetica;fontSize=11;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="layer-3">
+          <mxGeometry x="2010" y="400" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-3" value="Ingestion: S3 raw upload triggers EventBridge + SQS" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="layer-3">
+          <mxGeometry x="2045" y="402" width="430" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="badge-4" value="4" style="ellipse;whiteSpace=wrap;html=1;strokeColor=#0f172a;fillColor=#fee2e2;fontFamily=Helvetica;fontSize=11;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="layer-3">
+          <mxGeometry x="2010" y="460" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-4" value="Orchestration: EventBridge Pipe starts Step Functions" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="layer-3">
+          <mxGeometry x="2045" y="462" width="430" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="badge-5" value="5" style="ellipse;whiteSpace=wrap;html=1;strokeColor=#0f172a;fillColor=#ede9fe;fontFamily=Helvetica;fontSize=11;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="layer-3">
+          <mxGeometry x="2010" y="520" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-5" value="Extraction: Lambda + SageMaker OCR + Bedrock photo AI" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="layer-3">
+          <mxGeometry x="2045" y="522" width="430" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="badge-6" value="6" style="ellipse;whiteSpace=wrap;html=1;strokeColor=#0f172a;fillColor=#cffafe;fontFamily=Helvetica;fontSize=11;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="layer-3">
+          <mxGeometry x="2010" y="580" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-6" value="Human Review: low-confidence routed to A2I flow" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="layer-3">
+          <mxGeometry x="2045" y="582" width="430" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="badge-7" value="7" style="ellipse;whiteSpace=wrap;html=1;strokeColor=#0f172a;fillColor=#fce7f3;fontFamily=Helvetica;fontSize=11;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="layer-3">
+          <mxGeometry x="2010" y="640" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-7" value="Analytics: ECS Streamlit reads S3/DynamoDB/S3 Vectors" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="layer-3">
+          <mxGeometry x="2045" y="642" width="430" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="badge-8" value="8" style="ellipse;whiteSpace=wrap;html=1;strokeColor=#0f172a;fillColor=#e2e8f0;fontFamily=Helvetica;fontSize=11;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="layer-3">
+          <mxGeometry x="2010" y="700" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-8" value="Build: CodeBuild pushes container images to ECR" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=11;" vertex="1" parent="layer-3">
+          <mxGeometry x="2045" y="702" width="430" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge-user-route53" value="DNS query" style="edgeStyle=orthogonalEdgeStyle;jumpStyle=arc;rounded=0;orthogonalLoop=1;jettySize=auto;endArrow=block;exitX=1;exitY=0.5;entryX=0.5;entryY=0;labelBackgroundColor=#ffffff;" edge="1" source="user-client" target="route53-global" parent="layer-3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-route53-waf" value="resolve" style="edgeStyle=orthogonalEdgeStyle;jumpStyle=arc;rounded=0;orthogonalLoop=1;jettySize=auto;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;labelBackgroundColor=#ffffff;" edge="1" source="route53-global" target="waf-global" parent="layer-3">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="200" y="0" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge-waf-cloudfront" value="inspect" style="edgeStyle=orthogonalEdgeStyle;jumpStyle=arc;rounded=0;orthogonalLoop=1;jettySize=auto;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;labelBackgroundColor=#ffffff;" edge="1" source="waf-global" target="cloudfront-global" parent="layer-2">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="200" y="0" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge-cloudfront-apigw" value="HTTPS" style="edgeStyle=orthogonalEdgeStyle;jumpStyle=arc;rounded=0;orthogonalLoop=1;jettySize=auto;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;labelBackgroundColor=#ffffff;" edge="1" source="cloudfront-global" target="apigw-global" parent="layer-3">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="200" y="0" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge-apigw-cognito" value="JWT validate" style="edgeStyle=orthogonalEdgeStyle;jumpStyle=arc;dashed=1;rounded=0;orthogonalLoop=1;jettySize=auto;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;labelBackgroundColor=#ffffff;" edge="1" source="apigw-global" target="cognito-auth" parent="layer-3">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="200" y="0" as="offset" />
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="edge-apigw-cloudmap" value="private integration" style="edgeStyle=orthogonalEdgeStyle;jumpStyle=arc;rounded=0;orthogonalLoop=1;jettySize=auto;endArrow=block;exitX=1;exitY=0.5;entryX=0;entryY=0.5;labelBackgroundColor=#ffffff;" edge="1" source="apigw-global" target="cloudmap-sd" parent="layer-3">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="10" y="0" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge-cloudmap-ecs" value="SRV discovery" style="edgeStyle=orthogonalEdgeStyle;jumpStyle=arc;rounded=0;orthogonalLoop=1;jettySize=auto;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;labelBackgroundColor=#ffffff;" edge="1" source="cloudmap-sd" target="ecs-streamlit" parent="layer-3">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="200" y="0" as="offset" />
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="edge-s3-eventbridge" value="raw/* upload" style="edgeStyle=orthogonalEdgeStyle;jumpStyle=arc;rounded=0;orthogonalLoop=1;jettySize=auto;endArrow=block;exitX=0;exitY=0.5;entryX=1;entryY=0.5;labelBackgroundColor=#ffffff;" edge="1" source="s3-report" target="eventbridge-bus" parent="layer-4">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="120" y="0" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge-eventbridge-sqs" value="enqueue" style="edgeStyle=orthogonalEdgeStyle;jumpStyle=arc;rounded=0;orthogonalLoop=1;jettySize=auto;endArrow=block;exitX=1;exitY=0.5;entryX=0;entryY=0.5;labelBackgroundColor=#ffffff;" edge="1" source="eventbridge-bus" target="sqs-queue" parent="layer-3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-sqs-pipe" value="consume" style="edgeStyle=orthogonalEdgeStyle;jumpStyle=arc;rounded=0;orthogonalLoop=1;jettySize=auto;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;labelBackgroundColor=#ffffff;" edge="1" source="sqs-queue" target="eventbridge-pipe" parent="layer-3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-pipe-sfn" value="start execution" style="edgeStyle=orthogonalEdgeStyle;jumpStyle=arc;rounded=0;orthogonalLoop=1;jettySize=auto;endArrow=block;exitX=1;exitY=0.5;entryX=0;entryY=0.5;labelBackgroundColor=#ffffff;" edge="1" source="eventbridge-pipe" target="stepfunctions-sm" parent="layer-3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-sfn-lambda" value="task invoke" style="edgeStyle=orthogonalEdgeStyle;jumpStyle=arc;rounded=0;orthogonalLoop=1;jettySize=auto;endArrow=block;exitX=1;exitY=0.5;entryX=0;entryY=0.5;labelBackgroundColor=#ffffff;" edge="1" source="stepfunctions-sm" target="lambda-pipeline" parent="layer-3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-sfn-sagemaker" value="invokeEndpointAsync" style="edgeStyle=orthogonalEdgeStyle;jumpStyle=arc;rounded=0;orthogonalLoop=1;jettySize=auto;endArrow=block;exitX=1;exitY=0.5;entryX=0;entryY=0.5;labelBackgroundColor=#ffffff;" edge="1" source="stepfunctions-sm" target="sagemaker-ocr" parent="layer-3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-sfn-a2i" value="low confidence" style="edgeStyle=orthogonalEdgeStyle;jumpStyle=arc;dashed=1;rounded=0;orthogonalLoop=1;jettySize=auto;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;labelBackgroundColor=#ffffff;" edge="1" source="stepfunctions-sm" target="sagemaker-a2i" parent="layer-3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-a2i-sfn" value="callback" style="edgeStyle=orthogonalEdgeStyle;jumpStyle=arc;dashed=1;rounded=0;orthogonalLoop=1;jettySize=auto;endArrow=block;exitX=1;exitY=0.5;entryX=0.5;entryY=1;labelBackgroundColor=#ffffff;" edge="1" source="sagemaker-a2i" target="stepfunctions-sm" parent="layer-3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-lambda-bedrock" value="photo meaning" style="edgeStyle=orthogonalEdgeStyle;jumpStyle=arc;rounded=0;orthogonalLoop=1;jettySize=auto;endArrow=block;exitX=1;exitY=0.5;entryX=0;entryY=0.5;labelBackgroundColor=#ffffff;" edge="1" source="lambda-pipeline" target="bedrock-kimi" parent="layer-3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge-lambda-s3" value="read/write" style="edgeStyle=orthogonalEdgeStyle;jumpStyle=arc;rounded=0;orthogonalLoop=1;jettySize=auto;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;labelBackgroundColor=#ffffff;" edge="1" source="lambda-pipeline" target="s3-report" parent="layer-3">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="-120" y="0" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge-lambda-dynamodb" value="store status" style="edgeStyle=orthogonalEdgeStyle;jumpStyle=arc;rounded=0;orthogonalLoop=1;jettySize=auto;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;labelBackgroundColor=#ffffff;" edge="1" source="lambda-pipeline" target="dynamodb-report" parent="layer-3">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="-120" y="0" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge-sagemaker-s3" value="async output/failure" style="edgeStyle=orthogonalEdgeStyle;jumpStyle=arc;dashed=1;rounded=0;orthogonalLoop=1;jettySize=auto;endArrow=block;exitX=0.5;exitY=1;entryX=1;entryY=0.5;labelBackgroundColor=#ffffff;" edge="1" source="sagemaker-ocr" target="s3-report" parent="layer-3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-ecs-s3" value="analytics data" style="edgeStyle=orthogonalEdgeStyle;jumpStyle=arc;rounded=0;orthogonalLoop=1;jettySize=auto;endArrow=block;exitX=0.5;exitY=1;entryX=0;entryY=0.5;labelBackgroundColor=#ffffff;" edge="1" source="ecs-streamlit" target="s3-report" parent="layer-3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-ecs-dynamodb" value="metadata query" style="edgeStyle=orthogonalEdgeStyle;jumpStyle=arc;rounded=0;orthogonalLoop=1;jettySize=auto;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;labelBackgroundColor=#ffffff;" edge="1" source="ecs-streamlit" target="dynamodb-report" parent="layer-3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-ecs-vectors" value="semantic search" style="edgeStyle=orthogonalEdgeStyle;jumpStyle=arc;rounded=0;orthogonalLoop=1;jettySize=auto;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=0;labelBackgroundColor=#ffffff;" edge="1" source="ecs-streamlit" target="s3vectors-index" parent="layer-3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge-codebuild-ecr" value="docker push" style="edgeStyle=orthogonalEdgeStyle;jumpStyle=arc;rounded=0;orthogonalLoop=1;jettySize=auto;endArrow=block;exitX=1;exitY=0.5;entryX=0;entryY=0.5;labelBackgroundColor=#ffffff;" edge="1" source="codebuild-build" target="ecr-images" parent="layer-3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-ecr-sagemaker" value="BYOC image pull" style="edgeStyle=orthogonalEdgeStyle;jumpStyle=arc;dashed=1;rounded=0;orthogonalLoop=1;jettySize=auto;endArrow=block;exitX=0.5;exitY=0;entryX=0.5;entryY=1;labelBackgroundColor=#ffffff;" edge="1" source="ecr-images" target="sagemaker-ocr" parent="layer-3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-ecr-ecs" value="container image pull" style="edgeStyle=orthogonalEdgeStyle;jumpStyle=arc;dashed=1;rounded=0;orthogonalLoop=1;jettySize=auto;endArrow=block;exitX=1;exitY=0.5;entryX=0;entryY=1;labelBackgroundColor=#ffffff;" edge="1" source="ecr-images" target="ecs-streamlit" parent="layer-3">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="-120" y="0" as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge-state-cloudwatch" value="logs/metrics" style="edgeStyle=orthogonalEdgeStyle;jumpStyle=arc;dashed=1;rounded=0;orthogonalLoop=1;jettySize=auto;endArrow=block;exitX=1;exitY=1;entryX=0;entryY=0.5;labelBackgroundColor=#ffffff;" edge="1" source="stepfunctions-sm" target="cloudwatch-ops" parent="layer-5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-ecs-cloudwatch" value="app logs" style="edgeStyle=orthogonalEdgeStyle;jumpStyle=arc;dashed=1;rounded=0;orthogonalLoop=1;jettySize=auto;endArrow=block;exitX=1;exitY=1;entryX=0.5;entryY=0;labelBackgroundColor=#ffffff;" edge="1" source="ecs-streamlit" target="cloudwatch-ops" parent="layer-5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

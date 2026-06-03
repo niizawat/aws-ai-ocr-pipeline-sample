@@ -1,0 +1,51 @@
+{
+  "name": "quality-report-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3",
+    "@aws-sdk/client-dynamodb": "^3",
+    "@aws-sdk/client-s3": "^3",
+    "@aws-sdk/client-s3vectors": "^3",
+    "@aws-sdk/client-sagemaker": "^3",
+    "@aws-sdk/client-sagemaker-a2i-runtime": "^3",
+    "@aws-sdk/lib-dynamodb": "^3",
+    "@aws-sdk/s3-request-presigner": "^3",
+    "@emotion/cache": "^11",
+    "@emotion/react": "^11",
+    "@emotion/server": "^11",
+    "@emotion/styled": "^11",
+    "@mui/icons-material": "^9",
+    "@mui/material": "^9",
+    "@mui/material-nextjs": "^9",
+    "@mui/x-charts": "^9",
+    "@mui/x-data-grid": "^9",
+    "better-auth": "^1.6.13",
+    "dompurify": "^3",
+    "next": "^15.5",
+    "react": "^19",
+    "react-dom": "^19",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "typescript": "^5"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "sharp"
+    ]
+  }
+}
