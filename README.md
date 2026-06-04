@@ -127,15 +127,14 @@ flowchart TD
 
 | スタック | 内容 |
 |---|---|
-| `NetworkStack` | VPC / Security Group |
 | `StorageStack` | S3 / DynamoDB |
 | `EcrStack` | コンテナリポジトリ |
 | `EcrDeployStack` | LibreOffice / Next.js イメージビルド（CodeBuild） |
 | `CodeBuildStack` | OCR BYOC イメージビルド |
 | `OcrStack` | SageMaker 非同期エンドポイント（scale-to-0） |
 | `ReviewStack` | A2I フロー定義・Workforce |
-| `PipelineStack` | Step Functions ワークフロー・Lambda 群 |
-| `AnalysisStack` | Next.js UI・CloudFront・RAG 検索 |
+| `PipelineStack` | Step Functions ワークフロー・Lambda 群（VPC なし） |
+| `AnalysisStack` | Next.js UI・CloudFront・RAG 検索（VPC なし） |
 
 ## 前提条件
 
@@ -158,9 +157,17 @@ pnpm install
 # 3. CDK Bootstrap（初回のみ）
 AWS_PROFILE=your-profile npx cdk bootstrap
 
-# 4. 全スタックをデプロイ
+# 4. 全スタックをデプロイ（カスタムドメインなし）
 AWS_PROFILE=your-profile npx cdk deploy --all --require-approval never
+
+# カスタムドメインあり（Route53 Hosted Zone が必要）
+AWS_PROFILE=your-profile npx cdk deploy --all --require-approval never \
+  -c domainName=example.com \
+  -c hostedZoneId=Z0123456789ABCDEF \
+  -c hostedZoneName=example.com
 ```
+
+> カスタムドメインを省略した場合は `*.cloudfront.net` ドメインで公開されます。ACM 証明書・Route53 レコードは作成されません。
 
 デプロイ完了後、`AnalysisStack` の出力から Web UI の URL を確認できます。
 
