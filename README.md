@@ -18,7 +18,8 @@
 - 低信頼度時の確認: `Amazon A2I`（Human Loop）
 - データ蓄積: `S3`（中間・成果物）+ `DynamoDB`（構造化結果）
 - 公開・保護: `CloudFront`（ACM 証明書 + WAF）
-- 分析可視化: `Streamlit`（AnalysisStack 側）
+- 分析可視化: `Next.js on Lambda`（Lambda Web Adapter、AnalysisStack 側）
+  - RAG 検索: `S3 Vectors` + `Bedrock Titan Embed` + `Claude Sonnet`（SSE ストリーミング）
 
 ### アーキテクチャ図（Mermaid）
 
@@ -29,8 +30,8 @@ flowchart LR
   subgraph Access["アクセス層"]
     CognitoApp[Cognito<br/>Analysis認証]
     Cf[CloudFront<br/>ACM + WAF]
-    ApiGw[API Gateway HTTP API<br/>Private Integration]
-    Streamlit[Streamlit on ECS Fargate]
+    FnUrl[Lambda Function URL<br/>RESPONSE_STREAM]
+    NextJs[Next.js on Lambda<br/>Lambda Web Adapter]
   end
 
   subgraph Ingestion["取込・起動層"]
@@ -64,7 +65,7 @@ flowchart LR
     Vector[S3 Vectors]
   end
 
-  User --> CognitoApp --> Cf --> ApiGw --> Streamlit
+  User --> CognitoApp --> Cf --> FnUrl --> NextJs
   User --> Raw
   Raw --> EventBridge --> Queue --> Pipe --> Sfn
 
@@ -81,9 +82,9 @@ flowchart LR
   SageMaker --> OcrFail
   LambdaCore --> S3Data
   LambdaCore --> DDB
-  Streamlit --> DDB
-  Streamlit --> S3Data
-  Streamlit --> Vector
+  NextJs --> DDB
+  NextJs --> S3Data
+  NextJs --> Vector
 ```
 
 ## スタック構成（CDK）
@@ -93,12 +94,43 @@ flowchart LR
 - `QualityReportNetworkStack`: VPC / Security Group / Endpoint
 - `QualityReportStorageStack`: S3 / DynamoDB
 - `QualityReportEcrStack`: コンテナリポジトリ
-- `QualityReportEcrDeployStack`: LibreOffice / Streamlit 画像配備
+- `QualityReportEcrDeployStack`: LibreOffice / Next.js 画像ビルド（CodeBuild）
 - `QualityReportCodeBuildStack`: OCR 用 BYOC 画像ビルド
 - `QualityReportOcrStack`: SageMaker 非同期エンドポイント（scale-to-0）
 - `QualityReportReviewStack`: A2I フロー定義
 - `QualityReportPipelineStack`: 実処理ワークフロー
-- `QualityReportAnalysisStack`: 分析 UI と周辺コンポーネント
+- `QualityReportAnalysisStack`: 分析 UI（Next.js Lambda）と周辺コンポーネント
+
+## 分析 UI（Next.js on Lambda）
+
+`AnalysisStack` は Next.js を **Lambda Web Adapter (LWA)** でコンテナ Lambda 化して公開します。
+
+### 構成
+
+- ランタイム: `DockerImageFunction`（ARM64, 1536 MB）
+- Lambda Web Adapter: `aws-lambda-adapter:0.9.1`（`RESPONSE_STREAM` モード）
+- Function URL: `InvokeMode=RESPONSE_STREAM`（タイムアウト制約なし）
+- CloudFront: Function URL をオリジンとして WAF を適用
+
+### ECS Fargate + API Gateway からの移行理由
+
+旧構成の API Gateway HTTP API には **29 秒固定タイムアウト**があり、
+RAG 検索（Bedrock Claude によるストリーミング回答生成）が 504 エラーになっていました。
+Lambda Function URL（`RESPONSE_STREAM`）により、この制約を解消しています。
+
+### RAG 検索（SSE ストリーミング）
+
+`/search` ページでは Bedrock の `ConverseStreamCommand` を使い、
+回答テキストを **Server-Sent Events（SSE）** でリアルタイムにストリーミング表示します。
+
+```
+クエリ入力
+  → Bedrock Titan Embed でベクトル化
+  → S3 Vectors で類似検索（topK=10）
+  → 参照情報を先行送出（SSE: refs イベント）
+  → Bedrock Claude Sonnet でストリーミング回答生成（SSE: delta イベント）
+  → 完了（SSE: done イベント）
+```
 
 ## OCR 実行方式（現行）
 
@@ -106,7 +138,8 @@ flowchart LR
 
 - ベース: SageMaker PyTorch DLC ベースの BYOC コンテナ
 - 推論コード: `model.tar.gz` 内 `code/inference.py`
-- モデル: `PP-StructureV3` を既定利用
+- モデル: `PP-StructureV3`（`text_recognition_model_name="PP-OCRv5_server_rec"`）
+- PDF レンダリング: `PADDLE_PDX_PDF_RENDER_SCALE=2.0`（144 DPI 相当、PaddleX デフォルト）
 - 呼び出し: `InvokeEndpointAsync`（非同期）
 - 出力先:
   - 正常: `s3://<bucket>/ocr-async-output/`
@@ -200,7 +233,8 @@ flowchart TD
 
 - 正規化済みデータを DynamoDB に保存
 - 生成物・中間成果を S3 に保存
-- AnalysisStack 側の UI から検索・分析に利用
+- ベクターを S3 Vectors に登録（Bedrock Titan Embed、1024 次元、COSINE 距離）
+- AnalysisStack 側の Next.js UI から検索・分析に利用
 
 ## scan-pdf における役割分担
 
@@ -310,6 +344,8 @@ aws cognito-idp admin-add-user-to-group \
 ## 実装上の補足
 
 - リソース名に `paddleocr-vl` という識別子が一部残っていますが、
-  現行の OCR 実処理は `PP-StructureV3` を使用します。
+  現行の OCR 実処理は `PP-StructureV3`（`PP-OCRv5_server_rec` モデル）を使用します。
 - OCR コンテナビルドは `QualityReportCodeBuildStack` の Custom Resource が
+  自動実行します（通常、手動ビルドは不要）。
+- Next.js コンテナビルドは `QualityReportEcrDeployStack` の Custom Resource が
   自動実行します（通常、手動ビルドは不要）。
