@@ -214,7 +214,12 @@ export class AnalysisStack extends cdk.Stack {
     );
     lambdaRole.addToPolicy(
       new iam.PolicyStatement({
-        actions: ['bedrock:InvokeModel', 'bedrock:Converse', 'bedrock:ConverseStream'],
+        actions: [
+          'bedrock:InvokeModel',
+          'bedrock:InvokeModelWithResponseStream',
+          'bedrock:Converse',
+          'bedrock:ConverseStream',
+        ],
         resources: [
           `arn:aws:bedrock:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:inference-profile/${bedrockChatModelId}`,
           `arn:aws:bedrock:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:inference-profile/global.${bedrockChatFoundationModelId}`,
