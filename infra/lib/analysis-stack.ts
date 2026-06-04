@@ -27,9 +27,12 @@ export interface AnalysisStackProps extends cdk.StackProps {
   readonly webRepository: ecr.IRepository;
   readonly webImageTag: string;
   readonly projectName?: string;
-  readonly domainName: string;
-  readonly hostedZoneId: string;
-  readonly hostedZoneName: string;
+  /** カスタムドメイン（省略時は CloudFront デフォルトドメインで公開） */
+  readonly domainName?: string;
+  /** Route53 Hosted Zone ID（domainName を指定した場合のみ必須） */
+  readonly hostedZoneId?: string;
+  /** Route53 Hosted Zone 名（domainName を指定した場合のみ必須） */
+  readonly hostedZoneName?: string;
 }
 
 /**
@@ -54,25 +57,36 @@ export class AnalysisStack extends cdk.Stack {
     const vectorBucketName = `${projectName}-vectors-${cdk.Aws.REGION}`;
     const vectorIndexName = 'report-embeddings';
 
-    // -------------------------------------------------------
-    // Route53 Hosted Zone (既存ゾーンを参照)
-    // -------------------------------------------------------
-    const hostedZone = route53.HostedZone.fromHostedZoneAttributes(
-      this,
-      'HostedZone',
-      {
-        hostedZoneId: props.hostedZoneId,
-        zoneName: props.hostedZoneName,
-      },
-    );
+    const hasCustomDomain =
+      !!props.domainName && !!props.hostedZoneId && !!props.hostedZoneName;
+
+    // appBaseUrl はカスタムドメインがあればそれを使い、なければ CloudFront デフォルトドメインを使う。
+    // distribution は後で定義されるため Lazy.string で synthesis 時に解決する。
+    let distribution!: cloudfront.Distribution;
+    const appBaseUrl = hasCustomDomain
+      ? `https://${props.domainName!}`
+      : cdk.Lazy.string({ produce: () => `https://${distribution.domainName}` });
 
     // -------------------------------------------------------
-    // ACM Certificate (DNS 検証)
+    // Route53 Hosted Zone + ACM Certificate（カスタムドメイン指定時のみ）
     // -------------------------------------------------------
-    const certificate = new acm.Certificate(this, 'CloudFrontCertificate', {
-      domainName: props.domainName,
-      validation: acm.CertificateValidation.fromDns(hostedZone),
-    });
+    let hostedZone: route53.IHostedZone | undefined;
+    let certificate: acm.ICertificate | undefined;
+
+    if (hasCustomDomain) {
+      hostedZone = route53.HostedZone.fromHostedZoneAttributes(
+        this,
+        'HostedZone',
+        {
+          hostedZoneId: props.hostedZoneId!,
+          zoneName: props.hostedZoneName!,
+        },
+      );
+      certificate = new acm.Certificate(this, 'CloudFrontCertificate', {
+        domainName: props.domainName!,
+        validation: acm.CertificateValidation.fromDns(hostedZone),
+      });
+    }
 
     // -------------------------------------------------------
     // S3 Vectors (L2 Construct)
@@ -136,9 +150,9 @@ export class AnalysisStack extends cdk.Stack {
           cognito.OAuthScope.PROFILE,
         ],
         callbackUrls: [
-          `https://${props.domainName}/api/auth/callback/cognito`,
+          `${appBaseUrl}/api/auth/callback/cognito`,
         ],
-        logoutUrls: [`https://${props.domainName}/`],
+        logoutUrls: [`${appBaseUrl}/`],
       },
       supportedIdentityProviders: [
         cognito.UserPoolClientIdentityProvider.COGNITO,
@@ -284,7 +298,7 @@ export class AnalysisStack extends cdk.Stack {
         BEDROCK_CHAT_MODEL_ID: bedrockChatModelId,
         // 認証（Better Auth / Cognito）
         AUTH_ENABLED: 'true',
-        BETTER_AUTH_URL: `https://${props.domainName}`,
+        BETTER_AUTH_URL: appBaseUrl,
         COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
         COGNITO_DOMAIN: `${projectName}-app-${cdk.Aws.ACCOUNT_ID}.auth.${cdk.Aws.REGION}.amazoncognito.com`,
         COGNITO_REGION: cdk.Aws.REGION,
@@ -367,7 +381,7 @@ export class AnalysisStack extends cdk.Stack {
     // -------------------------------------------------------
     // CloudFront（Lambda Function URL を Origin として公開）
     // -------------------------------------------------------
-    const distribution = new cloudfront.Distribution(this, 'WebDistribution', {
+    distribution = new cloudfront.Distribution(this, 'WebDistribution', {
       comment: `${projectName} web (Next.js LWA) distribution`,
       defaultBehavior: {
         origin: new origins.FunctionUrlOrigin(fnUrl),
@@ -377,26 +391,34 @@ export class AnalysisStack extends cdk.Stack {
           cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
       },
-      domainNames: [props.domainName],
-      certificate,
+      ...(hasCustomDomain && certificate
+        ? {
+            domainNames: [props.domainName!],
+            certificate,
+            minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
+          }
+        : {}),
       webAclId: webAcl.attrArn,
-      minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
       enableLogging: false,
     });
 
-    new route53.ARecord(this, 'AlbAliasRecord', {
-      zone: hostedZone,
-      recordName: props.domainName,
-      target: route53.RecordTarget.fromAlias(
-        new route53Targets.CloudFrontTarget(distribution),
-      ),
-    });
+    if (hasCustomDomain && hostedZone) {
+      new route53.ARecord(this, 'AlbAliasRecord', {
+        zone: hostedZone,
+        recordName: props.domainName,
+        target: route53.RecordTarget.fromAlias(
+          new route53Targets.CloudFrontTarget(distribution),
+        ),
+      });
+    }
 
     // -------------------------------------------------------
     // Outputs
     // -------------------------------------------------------
     new cdk.CfnOutput(this, 'AppUrl', {
-      value: `https://${props.domainName}`,
+      value: hasCustomDomain
+        ? `https://${props.domainName}`
+        : `https://${distribution.domainName}`,
       description: 'Web application URL',
       exportName: `${projectName}-web-app-url`,
     });

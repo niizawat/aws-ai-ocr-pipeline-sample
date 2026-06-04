@@ -103,6 +103,12 @@ pipelineStack.addDependency(ocrStack);
 pipelineStack.addDependency(codeBuildStack);
 
 // Phase 5: 分析・可視化（Next.js on Lambda / VPC なし）
+// カスタムドメインは CDK context で任意指定（省略時は CloudFront デフォルトドメイン）
+//   例: npx cdk deploy -c domainName=example.com -c hostedZoneId=ZXXXXX -c hostedZoneName=example.com
+const domainName = app.node.tryGetContext('domainName') as string | undefined;
+const hostedZoneId = app.node.tryGetContext('hostedZoneId') as string | undefined;
+const hostedZoneName = app.node.tryGetContext('hostedZoneName') as string | undefined;
+
 const analysisStack = new AnalysisStack(app, 'QualityReportAnalysisStack', {
   env,
   projectName,
@@ -112,9 +118,9 @@ const analysisStack = new AnalysisStack(app, 'QualityReportAnalysisStack', {
   workteamName: reviewStack.workteamName,
   webRepository: ecrStack.webRepository,
   webImageTag: WEB_IMAGE_TAG,
-  domainName: 'quality-report.zawanee.online',
-  hostedZoneId: 'Z0366399YFI0M7IVDEGG',
-  hostedZoneName: 'zawanee.online',
+  ...(domainName && hostedZoneId && hostedZoneName
+    ? { domainName, hostedZoneId, hostedZoneName }
+    : {}),
   description:
     'Quality report platform - Analytics (Next.js Lambda, S3 Vectors, Cognito, HTTPS)',
 });
