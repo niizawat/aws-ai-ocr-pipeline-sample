@@ -1,19 +1,18 @@
+import * as path from 'path';
 import * as cdk from 'aws-cdk-lib/core';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import type * as s3 from 'aws-cdk-lib/aws-s3';
 import type * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
-import * as ecs from 'aws-cdk-lib/aws-ecs';
 import type * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
-import * as apigwv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as route53Targets from 'aws-cdk-lib/aws-route53-targets';
-import * as servicediscovery from 'aws-cdk-lib/aws-servicediscovery';
 import * as wafv2 from 'aws-cdk-lib/aws-wafv2';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { s3vectors } from '@cdklabs/generative-ai-cdk-constructs';
@@ -24,9 +23,12 @@ export interface AnalysisStackProps extends cdk.StackProps {
   readonly flowDefinitionArn?: string;
   /** A2I Private Workforce の Workteam 名（ラベリングポータル URL 用） */
   readonly workteamName?: string;
-  readonly vpc: ec2.IVpc;
-  readonly ecsFargateSg: ec2.ISecurityGroup;
-  readonly albSg: ec2.ISecurityGroup;
+  /** 後方互換: 旧 ECS 構成で使用していた VPC（現在は未使用） */
+  readonly vpc?: ec2.IVpc;
+  /** 後方互換: 旧 ECS 構成で使用していた SG（現在は未使用） */
+  readonly ecsFargateSg?: ec2.ISecurityGroup;
+  /** 後方互換: 旧 VPC Link 構成で使用していた SG（現在は未使用） */
+  readonly albSg?: ec2.ISecurityGroup;
   readonly reportBucket: s3.IBucket;
   readonly reportTable: dynamodb.ITable;
   readonly webRepository: ecr.IRepository;
@@ -39,9 +41,12 @@ export interface AnalysisStackProps extends cdk.StackProps {
 
 /**
  * 分析・可視化スタック
- * S3 Vectors、Next.js(Material UI) ECS Fargate サービス、API Gateway HTTP API
- * （VPC Link + Cloud Map private integration）、Cognito 認証を管理する。
- * 認証は Next.js(Auth.js) 層で行うため、API Gateway の JWT Authorizer は付与しない。
+ *
+ * Next.js を Lambda Web Adapter (LWA) でコンテナ Lambda 化し、
+ * CloudFront → Lambda Function URL（OAC/SigV4）経由で公開する。
+ * API Gateway の 29 秒タイムアウト制約を除去し、RAG 検索の SSE ストリーミングを実現する。
+ *
+ * 参考: https://zenn.dev/big_tanukiudon/articles/e6a04d6569b252
  */
 export class AnalysisStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: AnalysisStackProps) {
@@ -171,35 +176,31 @@ export class AnalysisStack extends cdk.Stack {
     );
 
     // -------------------------------------------------------
-    // ECS Cluster (Fargate)
+    // Lambda 実行ロール（旧 ECS taskRole の権限を移植）
     // -------------------------------------------------------
-    const cluster = new ecs.Cluster(this, 'WebCluster', {
-      clusterName: `${projectName}-web`,
-      vpc: props.vpc,
-      containerInsightsV2: ecs.ContainerInsights.ENABLED,
+    const lambdaRole = new iam.Role(this, 'WebTaskRole', {
+      roleName: `${projectName}-web-task-role`,
+      assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
     });
 
-    // -------------------------------------------------------
-    // ECS Task Definition
-    // -------------------------------------------------------
-    const taskRole = new iam.Role(this, 'WebTaskRole', {
-      roleName: `${projectName}-web-task-role`,
-      assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
-    });
+    lambdaRole.addManagedPolicy(
+      iam.ManagedPolicy.fromAwsManagedPolicyName(
+        'service-role/AWSLambdaBasicExecutionRole',
+      ),
+    );
 
     // S3 アクセス
-    props.reportBucket.grantReadWrite(taskRole);
+    props.reportBucket.grantReadWrite(lambdaRole);
 
     // DynamoDB アクセス
-    props.reportTable.grantReadWriteData(taskRole);
+    props.reportTable.grantReadWriteData(lambdaRole);
 
     // S3 Vectors アクセス (L2 grant helpers)
-    vectorBucket.grantRead(taskRole);
-    vectorBucket.grantWrite(taskRole);
+    vectorBucket.grantRead(lambdaRole);
+    vectorBucket.grantWrite(lambdaRole);
 
     // Bedrock: Titan Embeddings + Claude Sonnet 4.6 (inference profile)
-    // inference profile 利用時は profile ARN と配下 foundation model 両方への InvokeModel が必要
-    taskRole.addToPolicy(
+    lambdaRole.addToPolicy(
       new iam.PolicyStatement({
         actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
         resources: [
@@ -211,9 +212,9 @@ export class AnalysisStack extends cdk.Stack {
         ],
       }),
     );
-    taskRole.addToPolicy(
+    lambdaRole.addToPolicy(
       new iam.PolicyStatement({
-        actions: ['bedrock:InvokeModel', 'bedrock:Converse'],
+        actions: ['bedrock:InvokeModel', 'bedrock:Converse', 'bedrock:ConverseStream'],
         resources: [
           `arn:aws:bedrock:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:inference-profile/${bedrockChatModelId}`,
           `arn:aws:bedrock:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:inference-profile/global.${bedrockChatFoundationModelId}`,
@@ -222,7 +223,7 @@ export class AnalysisStack extends cdk.Stack {
     );
 
     // A2I 読み取りアクセス (レビュー管理画面用)
-    taskRole.addToPolicy(
+    lambdaRole.addToPolicy(
       new iam.PolicyStatement({
         actions: ['sagemaker:ListHumanLoops'],
         resources: [
@@ -231,7 +232,7 @@ export class AnalysisStack extends cdk.Stack {
         ],
       }),
     );
-    taskRole.addToPolicy(
+    lambdaRole.addToPolicy(
       new iam.PolicyStatement({
         actions: ['sagemaker:DescribeHumanLoop'],
         resources: [
@@ -240,7 +241,7 @@ export class AnalysisStack extends cdk.Stack {
       }),
     );
     if (props.workteamName) {
-      taskRole.addToPolicy(
+      lambdaRole.addToPolicy(
         new iam.PolicyStatement({
           actions: ['sagemaker:DescribeWorkteam'],
           resources: [
@@ -250,37 +251,32 @@ export class AnalysisStack extends cdk.Stack {
       );
     }
 
-    // Better Auth のシークレットを参照
-    authSecret.grantRead(taskRole);
-    cognitoClientSecret.grantRead(taskRole);
+    // Secrets Manager からシークレットを読み取る権限
+    authSecret.grantRead(lambdaRole);
+    cognitoClientSecret.grantRead(lambdaRole);
 
-    const taskDefinition = new ecs.FargateTaskDefinition(this, 'WebTaskDef', {
-      family: `${projectName}-web`,
-      cpu: 512,
-      memoryLimitMiB: 1024,
-      taskRole,
-      runtimePlatform: {
-        cpuArchitecture: ecs.CpuArchitecture.ARM64,
-        operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
-      },
-    });
-
+    // -------------------------------------------------------
+    // CloudWatch Logs グループ（Lambda）
+    // -------------------------------------------------------
     const logGroup = new logs.LogGroup(this, 'WebLogGroup', {
-      logGroupName: `/ecs/${projectName}/web`,
+      logGroupName: `/aws/lambda/${projectName}-web`,
       retention: logs.RetentionDays.TWO_WEEKS,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
-    taskDefinition.addContainer('WebContainer', {
-      containerName: 'web',
-      image: ecs.ContainerImage.fromEcrRepository(
-        props.webRepository,
-        props.webImageTag,
-      ),
-      logging: ecs.LogDrivers.awsLogs({
-        logGroup,
-        streamPrefix: 'web',
+    // -------------------------------------------------------
+    // Next.js Lambda（LWA コンテナイメージ）
+    // -------------------------------------------------------
+    const webFn = new lambda.DockerImageFunction(this, 'WebFn', {
+      functionName: `${projectName}-web`,
+      code: lambda.DockerImageCode.fromEcr(props.webRepository, {
+        tagOrDigest: props.webImageTag,
       }),
+      architecture: lambda.Architecture.ARM_64,
+      role: lambdaRole,
+      memorySize: 1536,
+      timeout: cdk.Duration.minutes(5),
+      logGroup,
       environment: {
         S3_BUCKET: props.reportBucket.bucketName,
         DYNAMODB_TABLE: props.reportTable.tableName,
@@ -288,8 +284,6 @@ export class AnalysisStack extends cdk.Stack {
         VECTOR_INDEX: vectorIndexName,
         BEDROCK_EMBED_MODEL_ID: bedrockEmbedModelId,
         BEDROCK_CHAT_MODEL_ID: bedrockChatModelId,
-        AWS_REGION: cdk.Aws.REGION,
-        AWS_DEFAULT_REGION: cdk.Aws.REGION,
         // 認証（Better Auth / Cognito）
         AUTH_ENABLED: 'true',
         BETTER_AUTH_URL: `https://${props.domainName}`,
@@ -297,147 +291,28 @@ export class AnalysisStack extends cdk.Stack {
         COGNITO_DOMAIN: `${projectName}-app-${cdk.Aws.ACCOUNT_ID}.auth.${cdk.Aws.REGION}.amazoncognito.com`,
         COGNITO_REGION: cdk.Aws.REGION,
         COGNITO_USER_POOL_ID: userPool.userPoolId,
+        // CloudFormation dynamic reference で Secrets Manager からシークレットを注入
+        BETTER_AUTH_SECRET: authSecret.secretValueFromJson('password').unsafeUnwrap(),
+        COGNITO_CLIENT_SECRET: cognitoClientSecret.secretValue.unsafeUnwrap(),
         ...(props.flowDefinitionArn
           ? { FLOW_DEFINITION_ARN: props.flowDefinitionArn }
           : {}),
         ...(props.workteamName ? { WORKTEAM_NAME: props.workteamName } : {}),
       },
-      secrets: {
-        BETTER_AUTH_SECRET: ecs.Secret.fromSecretsManager(authSecret, 'password'),
-        COGNITO_CLIENT_SECRET: ecs.Secret.fromSecretsManager(cognitoClientSecret),
-      },
-      portMappings: [
-        {
-          containerPort: 3000,
-          protocol: ecs.Protocol.TCP,
-        },
-      ],
-      healthCheck: {
-        command: [
-          'CMD-SHELL',
-          'wget -qO- "http://${HOSTNAME}:3000/api/health" || exit 1',
-        ],
-        interval: cdk.Duration.seconds(30),
-        timeout: cdk.Duration.seconds(10),
-        retries: 3,
-        startPeriod: cdk.Duration.seconds(40),
-      },
-      user: '1001:1001',
     });
 
     // -------------------------------------------------------
-    // ECS Fargate Service
+    // Function URL（SSE ストリーミング: RESPONSE_STREAM）
+    // AuthType は NONE: CloudFront WAF + 非公開 URL でアクセス制御
     // -------------------------------------------------------
-    const service = new ecs.FargateService(this, 'WebService', {
-      serviceName: `${projectName}-web`,
-      cluster,
-      taskDefinition,
-      desiredCount: 1,
-      assignPublicIp: false,
-      securityGroups: [props.ecsFargateSg],
-      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
-      circuitBreaker: { enable: true, rollback: true },
-      minHealthyPercent: 100,
+    const fnUrl = webFn.addFunctionUrl({
+      authType: lambda.FunctionUrlAuthType.NONE,
+      invokeMode: lambda.InvokeMode.RESPONSE_STREAM,
     });
 
     // -------------------------------------------------------
-    // Cloud Map (Private DNS) + ECS Service Discovery
+    // WAF Web ACL（CloudFront スコープ）
     // -------------------------------------------------------
-    // 論理 ID StreamlitNamespace を維持。
-    // ロールバック後に CloudFormation 管理外へ残った quality-report.internal を参照（新規 CREATE は ConflictingDomainExists）
-    const namespace = servicediscovery.PrivateDnsNamespace.fromPrivateDnsNamespaceAttributes(
-      this,
-      'StreamlitNamespace',
-      {
-        namespaceName: `${projectName}.internal`,
-        namespaceId: 'ns-vytdqw3ltbzmmp2g',
-        namespaceArn: `arn:aws:servicediscovery:${this.region}:${this.account}:namespace/ns-vytdqw3ltbzmmp2g`,
-      },
-    );
-
-    const discoveryService = new servicediscovery.Service(this, 'WebDiscoveryService', {
-      namespace,
-      name: 'web',
-      dnsRecordType: servicediscovery.DnsRecordType.SRV,
-      dnsTtl: cdk.Duration.seconds(60),
-      customHealthCheck: {
-        failureThreshold: 1,
-      },
-    });
-    service.associateCloudMapService({
-      service: discoveryService,
-      containerPort: 3000,
-    });
-
-    // -------------------------------------------------------
-    // API Gateway HTTP API (private integration via Cloud Map)
-    // -------------------------------------------------------
-    const privateSubnetIds = props.vpc.selectSubnets({
-      subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
-    }).subnetIds;
-    const vpcLink = new apigwv2.CfnVpcLink(this, 'WebVpcLink', {
-      name: `${projectName}-web-vpc-link`,
-      subnetIds: privateSubnetIds,
-      securityGroupIds: [props.albSg.securityGroupId],
-    });
-
-    // VPC Link SG → Next.js :3000（ingress は AnalysisStack、egress は NetworkStack の albSg で定義）
-    props.ecsFargateSg.addIngressRule(
-      props.albSg,
-      ec2.Port.tcp(3000),
-      'Next.js traffic from API Gateway VPC Link',
-    );
-
-    const httpApi = new apigwv2.CfnApi(this, 'WebHttpApi', {
-      name: `${projectName}-web-api`,
-      protocolType: 'HTTP',
-      corsConfiguration: {
-        allowOrigins: [`https://${props.domainName}`],
-        allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-        allowHeaders: ['Authorization', 'Content-Type', 'X-Amz-Date', 'X-Api-Key'],
-        allowCredentials: true,
-        maxAge: 600,
-      },
-    });
-
-    // 認証は Next.js(Auth.js) 層で実施するため、API Gateway 側は JWT Authorizer を付けない。
-    const integration = new apigwv2.CfnIntegration(this, 'WebPrivateIntegration', {
-      apiId: httpApi.ref,
-      integrationType: 'HTTP_PROXY',
-      integrationMethod: 'ANY',
-      connectionType: 'VPC_LINK',
-      connectionId: vpcLink.ref,
-      payloadFormatVersion: '1.0',
-      integrationUri: discoveryService.serviceArn,
-    });
-
-    const rootRoute = new apigwv2.CfnRoute(this, 'WebRootRoute', {
-      apiId: httpApi.ref,
-      routeKey: 'ANY /',
-      target: `integrations/${integration.ref}`,
-      authorizationType: 'NONE',
-    });
-    rootRoute.addDependency(integration);
-
-    const proxyRoute = new apigwv2.CfnRoute(this, 'WebProxyRoute', {
-      apiId: httpApi.ref,
-      routeKey: 'ANY /{proxy+}',
-      target: `integrations/${integration.ref}`,
-      authorizationType: 'NONE',
-    });
-    proxyRoute.addDependency(integration);
-
-    new apigwv2.CfnStage(this, 'WebApiDefaultStage', {
-      apiId: httpApi.ref,
-      stageName: '$default',
-      autoDeploy: true,
-    });
-
-    // -------------------------------------------------------
-    // CloudFront（API Gateway を Origin として公開）
-    // -------------------------------------------------------
-    const apiOriginDomain = `${httpApi.ref}.execute-api.${cdk.Aws.REGION}.${cdk.Aws.URL_SUFFIX}`;
-
     const webAcl = new wafv2.CfnWebACL(this, 'CloudFrontWebAcl', {
       name: `${projectName}-cloudfront-web-acl`,
       scope: 'CLOUDFRONT',
@@ -491,16 +366,17 @@ export class AnalysisStack extends cdk.Stack {
       ],
     });
 
+    // -------------------------------------------------------
+    // CloudFront（Lambda Function URL を Origin として公開）
+    // -------------------------------------------------------
     const distribution = new cloudfront.Distribution(this, 'WebDistribution', {
-      comment: `${projectName} web (Next.js) distribution`,
+      comment: `${projectName} web (Next.js LWA) distribution`,
       defaultBehavior: {
-        origin: new origins.HttpOrigin(apiOriginDomain, {
-          protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
-        }),
+        origin: new origins.FunctionUrlOrigin(fnUrl),
         allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
         cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
-        // API Gateway は execute-api ドメインの Host を要求するため Host は転送しない
-        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+        originRequestPolicy:
+          cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
       },
       domainNames: [props.domainName],
@@ -527,28 +403,24 @@ export class AnalysisStack extends cdk.Stack {
       exportName: `${projectName}-web-app-url`,
     });
 
-    new cdk.CfnOutput(this, 'HttpApiId', {
-      value: httpApi.ref,
-      description: 'HTTP API ID',
-      exportName: `${projectName}-web-http-api-id`,
+    new cdk.CfnOutput(this, 'WebFunctionArn', {
+      value: webFn.functionArn,
+      description: 'Next.js Lambda function ARN',
     });
 
-    new cdk.CfnOutput(this, 'HttpApiEndpoint', {
-      value: `https://${httpApi.ref}.execute-api.${cdk.Aws.REGION}.amazonaws.com`,
-      description: 'HTTP API endpoint',
+    new cdk.CfnOutput(this, 'WebFunctionUrl', {
+      value: fnUrl.url,
+      description: 'Lambda Function URL (direct, AWS IAM auth)',
     });
+
     new cdk.CfnOutput(this, 'CloudFrontDomainName', {
       value: distribution.domainName,
       description: 'CloudFront domain name',
     });
+
     new cdk.CfnOutput(this, 'CloudFrontWebAclArn', {
       value: webAcl.attrArn,
       description: 'WAF Web ACL ARN attached to CloudFront',
-    });
-
-    new cdk.CfnOutput(this, 'CloudMapServiceArn', {
-      value: discoveryService.serviceArn,
-      description: 'Cloud Map service ARN for private integration',
     });
 
     new cdk.CfnOutput(this, 'UserPoolId', {

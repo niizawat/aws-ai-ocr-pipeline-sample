@@ -1,21 +1,43 @@
-import { NextResponse } from 'next/server';
-
-import { ragQuery } from '@/lib/aws/rag';
-import { errorResponse } from '@/lib/api';
+import { ragQueryStream } from '@/lib/aws/rag';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
 
 export async function POST(request: Request) {
+  let query: string;
   try {
     const body = (await request.json()) as { query?: string };
-    const query = body.query?.trim();
+    query = body.query?.trim() ?? '';
     if (!query) {
-      return NextResponse.json({ error: 'query は必須です。' }, { status: 400 });
+      return new Response(JSON.stringify({ error: 'query は必須です。' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
     }
-    const result = await ragQuery(query);
-    return NextResponse.json(result);
-  } catch (error) {
-    return errorResponse(error);
+  } catch {
+    return new Response(JSON.stringify({ error: 'リクエストの解析に失敗しました。' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
+
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      for await (const event of ragQueryStream(query)) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        // error イベントはストリームを終了
+        if (event.type === 'done' || event.type === 'error') break;
+      }
+      controller.close();
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    },
+  });
 }

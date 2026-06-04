@@ -3,6 +3,7 @@ import 'server-only';
 import {
   InvokeModelCommand,
   ConverseCommand,
+  ConverseStreamCommand,
 } from '@aws-sdk/client-bedrock-runtime';
 import { QueryVectorsCommand } from '@aws-sdk/client-s3vectors';
 
@@ -92,6 +93,91 @@ export async function ragQuery(query: string): Promise<RagAnswer> {
 
   return { answer, references: uniqueRefs, found: true };
 }
+
+// ─── SSE ストリーミング版 ────────────────────────────────────────────────────
+
+/** SSE イベント型 */
+export type RagStreamEvent =
+  | { type: 'refs'; refs: RagReference[] }
+  | { type: 'delta'; text: string }
+  | { type: 'done' }
+  | { type: 'error'; message: string };
+
+/**
+ * RAG 検索のストリーミング版。
+ * embed → S3 Vectors query → refs を先行 yield → ConverseStream で delta を逐次 yield。
+ */
+export async function* ragQueryStream(query: string): AsyncGenerator<RagStreamEvent> {
+  try {
+    const queryVector = await embedQuery(query);
+
+    const search = await awsClients.s3vectors.send(
+      new QueryVectorsCommand({
+        vectorBucketName: env.vectorBucket(),
+        indexName: env.vectorIndex(),
+        queryVector: { float32: queryVector },
+        topK: 10,
+        returnMetadata: true,
+      }),
+    );
+
+    const vectors = search.vectors ?? [];
+    if (vectors.length === 0) {
+      yield { type: 'delta', text: '関連するレポートが見つかりませんでした。' };
+      yield { type: 'done' };
+      return;
+    }
+
+    const contextParts: string[] = [];
+    const references: RagReference[] = [];
+    for (const v of vectors) {
+      const meta = (v.metadata ?? {}) as Record<string, unknown>;
+      const content = typeof meta.content_text === 'string' ? meta.content_text : '';
+      if (content) contextParts.push(content);
+      references.push({
+        reportId: typeof meta.report_id === 'string' ? meta.report_id : '不明',
+        reportDate: typeof meta.report_date === 'string' ? meta.report_date : '',
+      });
+    }
+
+    // 参照情報を先行して送出（フロントで即表示）
+    yield { type: 'refs', refs: dedupeReferences(references).slice(0, 5) };
+
+    const context = contextParts.join('\n---\n');
+
+    const streamResp = await awsClients.bedrock.send(
+      new ConverseStreamCommand({
+        modelId: env.chatModelId(),
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                text: `${SYSTEM_PREFIX}\n\n## 参照データ\n${context}\n\n## 質問\n${query}`,
+              },
+            ],
+          },
+        ],
+      }),
+    );
+
+    for await (const chunk of streamResp.stream ?? []) {
+      const text = chunk.contentBlockDelta?.delta?.text;
+      if (text) {
+        yield { type: 'delta', text };
+      }
+    }
+
+    yield { type: 'done' };
+  } catch (err) {
+    yield {
+      type: 'error',
+      message: err instanceof Error ? err.message : '不明なエラーが発生しました。',
+    };
+  }
+}
+
+// ─── ユーティリティ ───────────────────────────────────────────────────────────
 
 function dedupeReferences(refs: RagReference[]): RagReference[] {
   const seen = new Set<string>();

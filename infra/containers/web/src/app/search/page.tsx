@@ -16,8 +16,8 @@ import PersonIcon from '@mui/icons-material/PersonRounded';
 
 import PageHeader from '@/components/PageHeader';
 import MarkdownContent from '@/components/MarkdownContent';
-import { apiFetch } from '@/lib/fetcher';
-import type { RagAnswer, RagReference } from '@/lib/types';
+import type { RagStreamEvent } from '@/lib/aws/rag';
+import type { RagReference } from '@/lib/types';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -48,25 +48,95 @@ export default function SearchPage() {
       setMessages((prev) => [...prev, { role: 'user', content: query }]);
       setInput('');
       setLoading(true);
+
+      // SSE ストリーミング受信
+      // assistant メッセージを空で先に追加し、delta ごとに追記する
+      setMessages((prev) => [...prev, { role: 'assistant', content: '' }]);
+
       try {
-        const result = await apiFetch<RagAnswer>('/api/rag/query', {
+        const resp = await fetch('/api/rag/query', {
           method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ query }),
         });
-        setMessages((prev) => [
-          ...prev,
-          { role: 'assistant', content: result.answer, references: result.references },
-        ]);
+
+        if (!resp.ok || !resp.body) {
+          throw new Error(`リクエストに失敗しました (${resp.status.toString()})`);
+        }
+
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() ?? '';
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const json = line.slice(6).trim();
+            if (!json) continue;
+
+            const event = JSON.parse(json) as RagStreamEvent;
+
+            if (event.type === 'refs') {
+              // 参照情報を即座にセット
+              setMessages((prev) => {
+                const next = [...prev];
+                const last = next[next.length - 1];
+                if (last?.role === 'assistant') {
+                  next[next.length - 1] = { ...last, references: event.refs };
+                }
+                return next;
+              });
+              setLoading(false);
+            } else if (event.type === 'delta') {
+              // テキストを追記
+              setMessages((prev) => {
+                const next = [...prev];
+                const last = next[next.length - 1];
+                if (last?.role === 'assistant') {
+                  next[next.length - 1] = {
+                    ...last,
+                    content: last.content + event.text,
+                  };
+                }
+                return next;
+              });
+              setLoading(false);
+            } else if (event.type === 'error') {
+              setMessages((prev) => {
+                const next = [...prev];
+                const last = next[next.length - 1];
+                if (last?.role === 'assistant') {
+                  next[next.length - 1] = {
+                    ...last,
+                    content: `検索中にエラーが発生しました: ${event.message}`,
+                  };
+                }
+                return next;
+              });
+            }
+          }
+        }
       } catch (e) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: 'assistant',
-            content: `検索中にエラーが発生しました: ${
-              e instanceof Error ? e.message : '不明なエラー'
-            }`,
-          },
-        ]);
+        setMessages((prev) => {
+          const next = [...prev];
+          const last = next[next.length - 1];
+          if (last?.role === 'assistant') {
+            next[next.length - 1] = {
+              ...last,
+              content: `検索中にエラーが発生しました: ${
+                e instanceof Error ? e.message : '不明なエラー'
+              }`,
+            };
+          }
+          return next;
+        });
       } finally {
         setLoading(false);
       }

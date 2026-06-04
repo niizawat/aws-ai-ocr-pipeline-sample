@@ -29,6 +29,12 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 
+# Lambda Web Adapter: SSE ストリーミング対応 (RESPONSE_STREAM モード)
+COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:0.9.1 /lambda-adapter /opt/extensions/lambda-adapter
+ENV AWS_LWA_INVOKE_MODE=response_stream
+ENV AWS_LWA_PORT=3000
+ENV AWS_LWA_READINESS_CHECK_PATH=/api/health
+
 RUN addgroup -g 1001 nodejs && adduser -u 1001 -G nodejs -S nextjs
 
 COPY --from=builder /app/public ./public
