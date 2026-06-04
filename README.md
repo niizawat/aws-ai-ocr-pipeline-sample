@@ -1,4 +1,4 @@
-# factory-creative-camp-2026
+# aws-ai-ocr-pipeline-sample
 
 製造業向け品質レポート（Excel / PDF）を取り込み、抽出・正規化・
 人手確認・蓄積・分析までを一連で処理する AWS 基盤です。
