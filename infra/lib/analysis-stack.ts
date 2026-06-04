@@ -1,6 +1,5 @@
 import * as path from 'path';
 import * as cdk from 'aws-cdk-lib/core';
-import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import type * as s3 from 'aws-cdk-lib/aws-s3';
 import type * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import type * as ecr from 'aws-cdk-lib/aws-ecr';
@@ -23,12 +22,6 @@ export interface AnalysisStackProps extends cdk.StackProps {
   readonly flowDefinitionArn?: string;
   /** A2I Private Workforce の Workteam 名（ラベリングポータル URL 用） */
   readonly workteamName?: string;
-  /** 後方互換: 旧 ECS 構成で使用していた VPC（現在は未使用） */
-  readonly vpc?: ec2.IVpc;
-  /** 後方互換: 旧 ECS 構成で使用していた SG（現在は未使用） */
-  readonly ecsFargateSg?: ec2.ISecurityGroup;
-  /** 後方互換: 旧 VPC Link 構成で使用していた SG（現在は未使用） */
-  readonly albSg?: ec2.ISecurityGroup;
   readonly reportBucket: s3.IBucket;
   readonly reportTable: dynamodb.ITable;
   readonly webRepository: ecr.IRepository;

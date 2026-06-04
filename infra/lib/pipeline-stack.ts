@@ -1,5 +1,4 @@
 import * as cdk from 'aws-cdk-lib/core';
-import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import type * as s3 from 'aws-cdk-lib/aws-s3';
 import type * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
@@ -16,9 +15,6 @@ import * as path from 'path';
 import type { Construct } from 'constructs';
 
 export interface PipelineStackProps extends cdk.StackProps {
-  readonly vpc: ec2.IVpc;
-  readonly lambdaSg: ec2.ISecurityGroup;
-  readonly ecsFargateSg: ec2.ISecurityGroup;
   readonly reportBucket: s3.IBucket;
   readonly reportTable: dynamodb.ITable;
   readonly libreOfficeRepository: ecr.IRepository;
@@ -108,9 +104,6 @@ export class PipelineStack extends cdk.Stack {
     // ========================================
     const lambdaDefaults = {
       runtime: PYTHON_RUNTIME,
-      vpc: props.vpc,
-      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS } as ec2.SubnetSelection,
-      securityGroups: [props.lambdaSg],
     };
 
     // PyMuPDF でページ品質を確認するためネイティブ依存が必要。
@@ -286,9 +279,6 @@ export class PipelineStack extends cdk.Stack {
         timeout: cdk.Duration.minutes(15),
         memorySize: 3072,
         architecture: lambda.Architecture.ARM_64,
-        vpc: props.vpc,
-        vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
-        securityGroups: [props.lambdaSg],
       },
     );
     props.reportBucket.grantReadWrite(libreOfficeConvertFn);
