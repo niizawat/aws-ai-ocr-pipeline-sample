@@ -34,29 +34,41 @@ interface OcrResultsFile {
   };
 }
 
+interface NormalizedSection {
+  sectionId?: string;
+  sectionType?: string;
+  pageNumber?: number;
+  content?: string;
+}
+
+interface NormalizedResult {
+  sections?: NormalizedSection[];
+}
+
 function toBbox(bbox?: number[] | null): Bbox | null {
   if (!bbox || bbox.length < 4) return null;
   return [bbox[0], bbox[1], bbox[2], bbox[3]];
 }
 
-async function readOcrResults(reportId: string): Promise<OcrResultsFile | null> {
-  const key = `ocr-results/${reportId}.json`;
+async function readS3Json<T>(key: string): Promise<T | null> {
   try {
     const res = await awsClients.s3.send(
       new GetObjectCommand({ Bucket: env.s3Bucket(), Key: key }),
     );
     const body = await res.Body?.transformToString();
     if (!body) return null;
-    return JSON.parse(body) as OcrResultsFile;
+    return JSON.parse(body) as T;
   } catch (error) {
     const name = (error as { name?: string }).name;
     const status = (error as { $metadata?: { httpStatusCode?: number } }).$metadata
       ?.httpStatusCode;
-    if (name === 'NoSuchKey' || name === 'NotFound' || status === 404) {
-      return null;
-    }
+    if (name === 'NoSuchKey' || name === 'NotFound' || status === 404) return null;
     throw error;
   }
+}
+
+async function readOcrResults(reportId: string): Promise<OcrResultsFile | null> {
+  return readS3Json<OcrResultsFile>(`ocr-results/${reportId}.json`);
 }
 
 /**
@@ -66,8 +78,9 @@ async function readOcrResults(reportId: string): Promise<OcrResultsFile | null> 
  * - bbox スケール基準の width/height は pageSizes（無ければ region.pageWidth/Height）
  */
 export async function getOcrPreview(reportId: string): Promise<OcrPreview> {
-  const [results, images] = await Promise.all([
+  const [results, normalized, images] = await Promise.all([
     readOcrResults(reportId),
+    readS3Json<NormalizedResult>(`results/${reportId}/result.json`),
     listReportImages(reportId),
   ]);
 
@@ -111,6 +124,30 @@ export async function getOcrPreview(reportId: string): Promise<OcrPreview> {
     list.push(block);
     blocksByPage.set(page, list);
   });
+
+  // photo-interpretation / pdf-page / pdf-table セクションを bbox なしブロックとして追加
+  const TARGET_TYPES = new Set(['photo-interpretation', 'pdf-page', 'pdf-table']);
+  for (const section of normalized?.sections ?? []) {
+    if (!TARGET_TYPES.has(section.sectionType ?? '')) continue;
+    const page = section.pageNumber ?? 1;
+    const label =
+      section.sectionType === 'photo-interpretation'
+        ? 'photo-interpretation'
+        : section.sectionType === 'pdf-table'
+          ? 'pdf-table'
+          : 'pdf-page';
+    const block: OcrPreviewBlock = {
+      id: section.sectionId ?? `${label}-${page}`,
+      page,
+      label,
+      text: section.content ?? '',
+      bbox: null,
+      confidence: null,
+    };
+    const list = blocksByPage.get(page) ?? [];
+    list.push(block);
+    blocksByPage.set(page, list);
+  }
 
   // ページ番号の集合（regions と画像枚数の和集合）
   const pageNumbers = new Set<number>(blocksByPage.keys());

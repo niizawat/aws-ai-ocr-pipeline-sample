@@ -15,6 +15,7 @@ from typing import Any
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 os.environ["PADDLEOCR_HOME"] = "/opt/ml/code/.paddleocr"
+os.environ["PADDLE_PDX_PDF_RENDER_SCALE"] = "2.0"
 
 
 def model_fn(model_dir: str) -> dict[str, Any]:
@@ -22,6 +23,7 @@ def model_fn(model_dir: str) -> dict[str, Any]:
     from paddleocr import PPStructureV3
 
     model = PPStructureV3(
+        text_recognition_model_name="PP-OCRv5_server_rec",
         use_doc_orientation_classify=False,
         use_doc_unwarping=False,
     )

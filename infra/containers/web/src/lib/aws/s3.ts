@@ -60,8 +60,11 @@ export async function listReportImages(
   const result: { key: string; name: string; url: string }[] = [];
   for (const obj of objects) {
     if (!obj.Key || obj.Key.endsWith('/')) continue;
+    const name = obj.Key.split('/').pop() ?? obj.Key;
+    // LibreOffice も同プレフィックスに input.png 等を出力するため page-*.png のみ対象にする
+    if (!name.startsWith('page-')) continue;
     const url = await createDownloadUrl(obj.Key);
-    result.push({ key: obj.Key, name: obj.Key.split('/').pop() ?? obj.Key, url });
+    result.push({ key: obj.Key, name, url });
   }
   return result;
 }

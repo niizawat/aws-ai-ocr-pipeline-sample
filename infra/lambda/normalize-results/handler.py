@@ -37,14 +37,90 @@ def handler(event, context):
 
     elif extraction_type == "pdf-text":
         for page in event.get("pages", []):
+            page_number = page["pageNumber"]
             sections.append(
                 {
-                    "sectionId": f"page{page['pageNumber']}",
+                    "sectionId": f"page{page_number}",
                     "sectionType": "pdf-page",
-                    "pageNumber": page["pageNumber"],
+                    "pageNumber": page_number,
+                    "content": page["text"],
+                    # OCR 品質情報（Phase 2 のフォールバック判定に利用）
+                    "needsOcr": page.get("needsOcr", False),
+                    "ocrReason": page.get("ocrReason"),
+                }
+            )
+            # 表が抽出されていればセクションを追加（後方互換: tables キー無しは無視）
+            for table_idx, table_md in enumerate(page.get("tables", [])):
+                sections.append(
+                    {
+                        "sectionId": f"page{page_number}-table{table_idx + 1}",
+                        "sectionType": "pdf-table",
+                        "pageNumber": page_number,
+                        "content": table_md,
+                    }
+                )
+
+    elif extraction_type in ("excel-hybrid", "pdf-hybrid"):
+        # PyMuPDF テキスト + 画像/グラフ OCR のハイブリッド抽出。
+        # - PyMuPDF: 全ページのテキスト・表を pdf-page / pdf-table セクションへ
+        # - OCR(PP-StructureV3): 視覚ブロック（figure/chart/image）のみ ocr-* セクションへ追加
+        for page in event.get("pages", []):
+            page_number = page["pageNumber"]
+            if page.get("text", "").strip():
+                sections.append(
+                    {
+                        "sectionId": f"page{page_number}",
+                        "sectionType": "pdf-page",
+                        "pageNumber": page_number,
+                        "content": page["text"],
+                    }
+                )
+            for table_idx, table_md in enumerate(page.get("tables", [])):
+                sections.append(
+                    {
+                        "sectionId": f"page{page_number}-table{table_idx + 1}",
+                        "sectionType": "pdf-table",
+                        "pageNumber": page_number,
+                        "content": table_md,
+                    }
+                )
+        # OCR 視覚ブロック（テキスト以外の図・グラフ・画像）を追加
+        _visual = {"figure", "chart", "image", "picture", "figure_title", "chart_title"}
+        for region in event.get("ocrResults", {}).get("regions", []):
+            label = region.get("blockLabel", "text")
+            if label in _visual:
+                sections.append(
+                    {
+                        "sectionId": region.get("regionId", "unknown"),
+                        "sectionType": f"ocr-{label}",
+                        "content": region.get("text", ""),
+                        "confidence": region.get("confidence"),
+                    }
+                )
+        # photoInterpretations は後段の汎用ハンドラ（全 extractionType 共通）で処理する
+
+    elif extraction_type == "excel-pymupdf":
+        # LibreOffice 変換後に PyMuPDF でテキスト抽出した経路（OCR スキップ）。
+        # PDF ページテキストと表 Markdown を sections に格納する。
+        for page in event.get("pages", []):
+            page_number = page["pageNumber"]
+            sections.append(
+                {
+                    "sectionId": f"page{page_number}",
+                    "sectionType": "pdf-page",
+                    "pageNumber": page_number,
                     "content": page["text"],
                 }
             )
+            for table_idx, table_md in enumerate(page.get("tables", [])):
+                sections.append(
+                    {
+                        "sectionId": f"page{page_number}-table{table_idx + 1}",
+                        "sectionType": "pdf-table",
+                        "pageNumber": page_number,
+                        "content": table_md,
+                    }
+                )
 
     elif extraction_type == "ocr":
         # PaddleOCR-VL のレイアウト種別（text/table/chart/formula/image 等）を

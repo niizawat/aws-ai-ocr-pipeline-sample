@@ -41,16 +41,29 @@ def handler(event, context):
 
     input_path = workdir / Path(key).name
     s3.download_file(bucket, key, str(input_path))
-    # LibreOffice / ファイルシステムの相性問題を避けるため ASCII 名で変換する
-    convert_input = workdir / "input.xlsx"
+
+    # LibreOffice / ファイルシステムの相性問題を避けるため ASCII 名で変換する。
+    # 拡張子を保持することで LibreOffice がファイル種別を正しく認識する。
+    src_ext = Path(key).suffix.lower()
+    convert_input = workdir / f"input{src_ext}"
     shutil.copy(input_path, convert_input)
+
+    # ファイル種別に合わせた LibreOffice フィルタを選択する
+    if src_ext in (".xlsx", ".xls", ".ods", ".csv"):
+        pdf_filter = "pdf:calc_pdf_Export"
+    elif src_ext in (".docx", ".doc", ".odt", ".rtf"):
+        pdf_filter = "pdf:writer_pdf_Export"
+    elif src_ext in (".pptx", ".ppt", ".odp"):
+        pdf_filter = "pdf:impress_pdf_Export"
+    else:
+        pdf_filter = "pdf"
 
     pdf_dir = workdir / "pdf"
     png_dir = workdir / "png"
     pdf_dir.mkdir(exist_ok=True)
     png_dir.mkdir(exist_ok=True)
 
-    _convert_to_pdf(convert_input, pdf_dir)
+    _convert_to_pdf(convert_input, pdf_dir, pdf_filter)
     _convert_to_png(convert_input, png_dir)
 
     pdf_files = sorted(pdf_dir.glob("*.pdf")) + sorted(pdf_dir.glob("*.PDF"))
@@ -83,8 +96,8 @@ def handler(event, context):
     }
 
 
-def _convert_to_pdf(input_path: Path, output_dir: Path) -> None:
-    _run_libreoffice(input_path, output_dir, "pdf:calc_pdf_Export")
+def _convert_to_pdf(input_path: Path, output_dir: Path, pdf_filter: str = "pdf:calc_pdf_Export") -> None:
+    _run_libreoffice(input_path, output_dir, pdf_filter)
 
 
 def _convert_to_png(input_path: Path, output_dir: Path) -> None:

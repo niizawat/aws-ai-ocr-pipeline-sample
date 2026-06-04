@@ -1,4 +1,5 @@
 # 写真解釈 Lambda の依存（CDK の Docker バンドリングでインストールされる）
 # PDF を画像化（PyMuPDF）し、Pillow で 3MB 以下に調整したうえで Bedrock Kimi K2.5 へ送る。
-PyMuPDF>=1.24.0
+# render-pdf-images / extract-pdf-text と PyMuPDF バージョンを統一
+PyMuPDF==1.27.2.3
 pillow>=10.0.0

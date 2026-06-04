@@ -113,13 +113,20 @@ export class PipelineStack extends cdk.Stack {
       securityGroups: [props.lambdaSg],
     };
 
+    // PyMuPDF でページ品質を確認するためネイティブ依存が必要。
+    // テキスト抽出のみ（画像化なし）なので 512MB で十分（設計書 §Phase3 注記）。
     const classifyFileFn = new lambda.Function(this, 'ClassifyFileFn', {
       ...lambdaDefaults,
       functionName: `${projectName}-classify-file`,
+      architecture: lambda.Architecture.ARM_64,
       handler: 'handler.handler',
-      code: lambda.Code.fromAsset(path.join(__dirname, '../lambda/classify-file')),
+      code: pythonRequirementsAsset(
+        path.join(__dirname, '../lambda/classify-file'),
+        PYTHON_RUNTIME,
+        'linux/arm64',
+      ),
       timeout: cdk.Duration.seconds(60),
-      memorySize: 256,
+      memorySize: 512,
       environment: {
         REPORT_BUCKET: props.reportBucket.bucketName,
       },
@@ -142,16 +149,20 @@ export class PipelineStack extends cdk.Stack {
     });
     props.reportBucket.grantRead(extractExcelFn);
 
+    // PyMuPDF + pymupdf4llm + numpy はネイティブ依存かつ大容量のため
+    // render-pdf-images と同様に arm64 固定・メモリ増量する（設計書 §7.2 注意点）。
     const extractPdfTextFn = new lambda.Function(this, 'ExtractPdfTextFn', {
       ...lambdaDefaults,
       functionName: `${projectName}-extract-pdf-text`,
+      architecture: lambda.Architecture.ARM_64,
       handler: 'handler.handler',
       code: pythonRequirementsAsset(
         path.join(__dirname, '../lambda/extract-pdf-text'),
         PYTHON_RUNTIME,
+        'linux/arm64',
       ),
       timeout: cdk.Duration.seconds(300),
-      memorySize: 512,
+      memorySize: 1024,
       environment: {
         REPORT_BUCKET: props.reportBucket.bucketName,
       },
@@ -413,6 +424,47 @@ export class PipelineStack extends cdk.Stack {
       return submit;
     };
 
+    // PyMuPDF テキスト等の既存フィールドを保持したまま OCR 結果を $.ocrCheck に合流する
+    // ハイブリッド処理（テキスト抽出 + 画像/グラフ OCR）向け
+    const buildOcrAsyncMerge = (
+      idPrefix: string,
+      inputKeyPath: string,
+      onReady: sfn.IChainable,
+    ): sfn.State => {
+      const submit = new sfn.CustomState(this, `${idPrefix}Submit`, {
+        stateJson: {
+          Type: 'Task',
+          Resource:
+            'arn:aws:states:::aws-sdk:sagemakerruntime:invokeEndpointAsync',
+          Parameters: {
+            EndpointName: props.ocrEndpointName,
+            ContentType: 'application/octet-stream',
+            'InputLocation.$': `States.Format('s3://{}/{}', $.bucket, ${inputKeyPath})`,
+          },
+          ResultPath: '$.ocrAsync',
+        },
+      });
+      const wait = new sfn.Wait(this, `${idPrefix}Wait`, {
+        time: sfn.WaitTime.duration(cdk.Duration.seconds(30)),
+      });
+      // resultPath で既存フィールドを保持したまま OCR チェック結果を $.ocrCheck に格納
+      const check = new tasks.LambdaInvoke(this, `${idPrefix}Check`, {
+        lambdaFunction: readOcrResultFn,
+        resultPath: '$.ocrCheck',
+      });
+      const choice = new sfn.Choice(this, `${idPrefix}ReadyChoice`);
+
+      submit.next(wait);
+      wait.next(check);
+      check.next(
+        choice
+          // resultPath 使用のため Payload でラップされた ocrReady を参照する
+          .when(sfn.Condition.booleanEquals('$.ocrCheck.Payload.ocrReady', true), onReady)
+          .otherwise(wait),
+      );
+      return submit;
+    };
+
     // ========================================
     // Step Functions ワークフロー定義
     // ========================================
@@ -432,6 +484,8 @@ export class PipelineStack extends cdk.Stack {
       lambdaFunction: extractPdfTextFn,
       payloadResponseOnly: true,
     });
+
+    // --- digital-pdf: 品質 OK 経路（PyMuPDF テキスト直行） ---
     const normalizePdf = new tasks.LambdaInvoke(this, 'NormalizePdf', {
       lambdaFunction: normalizeResultsFn,
       payloadResponseOnly: true,
@@ -440,11 +494,88 @@ export class PipelineStack extends cdk.Stack {
       lambdaFunction: storeResultsFn,
       payloadResponseOnly: true,
     });
-    const pdfChain = extractPdfText
-      .next(normalizePdf)
-      .next(storePdf)
-      .next(makeIndexTask('IndexEmbeddingsPdf'))
-      .next(done);
+
+    // --- digital-pdf: OCR フォールバック経路（設計書 §7.2 ハイブリッドルーティング）---
+    // analyze_page() が needs_ocr=true と判定したページが存在する場合、
+    // scan-pdf と同じ OCR 非同期ループを再利用して全ページを OCR 処理する。
+    // render-pdf-images → buildOcrAsync → confidence 判定 → normalize/store/index
+    const normalizePdfFallbackHigh = new tasks.LambdaInvoke(this, 'NormalizePdfFallbackHigh', {
+      lambdaFunction: normalizeResultsFn,
+      payloadResponseOnly: true,
+    });
+    const storePdfFallbackHigh = new tasks.LambdaInvoke(this, 'StorePdfFallbackHigh', {
+      lambdaFunction: storeResultsFn,
+      payloadResponseOnly: true,
+    });
+    const triggerReviewPdfFallback = new tasks.LambdaInvoke(
+      this,
+      'TriggerReviewPdfFallback',
+      {
+        lambdaFunction: triggerReviewFn,
+        integrationPattern: sfn.IntegrationPattern.WAIT_FOR_TASK_TOKEN,
+        payload: sfn.TaskInput.fromObject({
+          taskToken: sfn.JsonPath.taskToken,
+          'input.$': '$',
+        }),
+        heartbeatTimeout: sfn.Timeout.duration(cdk.Duration.hours(48)),
+      },
+    );
+    const normalizePdfFallbackReview = new tasks.LambdaInvoke(
+      this,
+      'NormalizePdfFallbackReview',
+      {
+        lambdaFunction: normalizeResultsFn,
+        payloadResponseOnly: true,
+      },
+    );
+    const storePdfFallbackReview = new tasks.LambdaInvoke(this, 'StorePdfFallbackReview', {
+      lambdaFunction: storeResultsFn,
+      payloadResponseOnly: true,
+    });
+
+    const confidenceCheckPdfFallback = new sfn.Choice(this, 'ConfidenceCheckPdfFallback')
+      .when(
+        sfn.Condition.numberGreaterThanEquals('$.confidence', 0.7),
+        normalizePdfFallbackHigh
+          .next(storePdfFallbackHigh)
+          .next(makeIndexTask('IndexEmbeddingsPdfFallbackHigh'))
+          .next(done),
+      )
+      .otherwise(
+        triggerReviewPdfFallback
+          .next(normalizePdfFallbackReview)
+          .next(storePdfFallbackReview)
+          .next(makeIndexTask('IndexEmbeddingsPdfFallbackReview'))
+          .next(done),
+      );
+
+    // OCR ポーリングが完了したら confidence 判定へ（scan-pdf の OcrScanReady に相当）
+    const ocrPdfFallbackReady = new sfn.Pass(this, 'OcrPdfFallbackReady');
+    ocrPdfFallbackReady.next(confidenceCheckPdfFallback);
+
+    // RenderPdfImagesFallback: scan-pdf の RenderPdfImagesScan と同じ Lambda を別ステートで再利用
+    const renderPdfImagesFallback = new tasks.LambdaInvoke(this, 'RenderPdfImagesFallback', {
+      lambdaFunction: renderPdfImagesFn,
+      payloadResponseOnly: true,
+    });
+    renderPdfImagesFallback.next(
+      buildOcrAsync('OcrPdfFallback', '$.key', ocrPdfFallbackReady),
+    );
+
+    // pdfOcrCheck: hasPagesNeedOcr フラグで経路を切り替える
+    const pdfOcrCheck = new sfn.Choice(this, 'PdfOcrCheck')
+      .when(
+        sfn.Condition.booleanEquals('$.hasPagesNeedOcr', true),
+        renderPdfImagesFallback,
+      )
+      .otherwise(
+        normalizePdf
+          .next(storePdf)
+          .next(makeIndexTask('IndexEmbeddingsPdf'))
+          .next(done),
+      );
+
+    const pdfChain = extractPdfText.next(pdfOcrCheck);
 
     // --- scan-pdf パス ---
     const normalizeOcrHigh = new tasks.LambdaInvoke(this, 'NormalizeOcrHigh', {
@@ -541,91 +672,185 @@ export class PipelineStack extends cdk.Stack {
       payloadResponseOnly: true,
     });
 
-    // OCR ループの「準備完了」到達点（並列ブランチの終端として check 出力を引き継ぐ）
-    const ocrShapesReady = new sfn.Pass(this, 'OcrShapesReady');
+    // --- xlsx-with-shapes パス: PyMuPDF テキスト抽出必須 + 画像/グラフがあれば OCR も実行 ---
+    const extractPdfTextShapes = new tasks.LambdaInvoke(this, 'ExtractPdfTextShapes', {
+      lambdaFunction: extractPdfTextFn,
+      payloadResponseOnly: true,
+    });
 
     const parallelShapes = new sfn.Parallel(this, 'ParallelShapesProcessing');
     parallelShapes.branch(extractExcelShapes);
-    parallelShapes.branch(
-      libreOfficeConvert.next(
-        buildOcrAsync('OcrShapes', '$.key', ocrShapesReady),
-      ),
-    );
+    parallelShapes.branch(libreOfficeConvert.next(extractPdfTextShapes));
 
-    const mergeResults = new sfn.Pass(this, 'MergeShapesResults', {
+    // Parallel 後: [$excelShapes, $pdfText] を単一オブジェクトへ展開（画像判定フラグ含む）
+    const preMergeShapes = new sfn.Pass(this, 'PreMergeShapes', {
       parameters: {
         'bucket.$': '$[1].bucket',
         'key.$': '$[1].key',
         'report_id.$': '$[1].report_id',
-        'extractionType': 'ocr',
+        'hasPagesNeedOcr.$': '$[1].hasPagesNeedOcr',
+        'pages.$': '$[1].pages',
+        'fullText.$': '$[1].fullText',
+        'pageCount.$': '$[1].pageCount',
         'excelData.$': '$[0]',
-        'ocrResults.$': '$[1].ocrResults',
-        'confidence.$': '$[1].confidence',
       },
     });
 
-    const normalizeShapesHigh = new tasks.LambdaInvoke(
-      this,
-      'NormalizeShapesHigh',
-      {
-        lambdaFunction: normalizeResultsFn,
-        payloadResponseOnly: true,
+    // --- xlsx OCR なし（テキストのみ） ---
+    const setExcelPdfText = new sfn.Pass(this, 'SetExcelPdfText', {
+      parameters: {
+        'bucket.$': '$.bucket',
+        'key.$': '$.key',
+        'report_id.$': '$.report_id',
+        'extractionType': 'excel-pymupdf',
+        'excelData.$': '$.excelData',
+        'pages.$': '$.pages',
+        'fullText.$': '$.fullText',
+        'pageCount.$': '$.pageCount',
+        'confidence': 1.0,
       },
-    );
-    const storeShapesHigh = new tasks.LambdaInvoke(this, 'StoreShapesHigh', {
+    });
+    const normalizeShapesPdfHigh = new tasks.LambdaInvoke(this, 'NormalizeShapesPdfHigh', {
+      lambdaFunction: normalizeResultsFn,
+      payloadResponseOnly: true,
+    });
+    const storeShapesPdfHigh = new tasks.LambdaInvoke(this, 'StoreShapesPdfHigh', {
       lambdaFunction: storeResultsFn,
       payloadResponseOnly: true,
     });
-    const triggerReviewShapes = new tasks.LambdaInvoke(
-      this,
-      'TriggerReviewShapes',
-      {
-        lambdaFunction: triggerReviewFn,
-        integrationPattern: sfn.IntegrationPattern.WAIT_FOR_TASK_TOKEN,
-        payload: sfn.TaskInput.fromObject({
-          taskToken: sfn.JsonPath.taskToken,
-          'input.$': '$',
-        }),
-        heartbeatTimeout: sfn.Timeout.duration(cdk.Duration.hours(48)),
-      },
-    );
-    const normalizeShapesReview = new tasks.LambdaInvoke(
-      this,
-      'NormalizeShapesReview',
-      {
-        lambdaFunction: normalizeResultsFn,
-        payloadResponseOnly: true,
-      },
-    );
-    const storeShapesReview = new tasks.LambdaInvoke(
-      this,
-      'StoreShapesReview',
-      {
-        lambdaFunction: storeResultsFn,
-        payloadResponseOnly: true,
-      },
-    );
+    setExcelPdfText
+      .next(normalizeShapesPdfHigh)
+      .next(storeShapesPdfHigh)
+      .next(makeIndexTask('IndexEmbeddingsShapesPdfHigh'))
+      .next(done);
 
-    const confidenceCheckShapes = new sfn.Choice(
-      this,
-      'ConfidenceCheckShapes',
-    )
-      .when(
-        sfn.Condition.numberGreaterThanEquals('$.confidence', 0.7),
-        normalizeShapesHigh
-          .next(storeShapesHigh)
-          .next(makeIndexTask('IndexEmbeddingsShapesHigh'))
-          .next(done),
-      )
-      .otherwise(
-        triggerReviewShapes
-          .next(normalizeShapesReview)
-          .next(storeShapesReview)
-          .next(makeIndexTask('IndexEmbeddingsShapesReview'))
-          .next(done),
-      );
+    // --- xlsx ハイブリッド（PyMuPDF テキスト + 画像/グラフ OCR + LLM 写真解釈）---
+    // OCR と写真解釈を並列実行し、scan-pdf と同等の品質を実現する（設計書 §4 パイプライン）
+    const renderPdfImagesShapes = new tasks.LambdaInvoke(this, 'RenderPdfImagesShapes', {
+      lambdaFunction: renderPdfImagesFn,
+      payloadResponseOnly: true,
+    });
+    // OCR ブランチ: ocrShapesHybridReady はブランチ終端（.next() なし）
+    const ocrShapesHybridReady = new sfn.Pass(this, 'OcrShapesHybridReady');
+    // 写真解釈ブランチ
+    const interpretPhotoShapes = new tasks.LambdaInvoke(this, 'InterpretPhotoShapes', {
+      lambdaFunction: interpretPhotoFn,
+      payloadResponseOnly: true,
+    });
+    const parallelShapesHybrid = new sfn.Parallel(this, 'ParallelShapesHybrid');
+    parallelShapesHybrid.branch(buildOcrAsyncMerge('OcrShapes', '$.key', ocrShapesHybridReady));
+    parallelShapesHybrid.branch(interpretPhotoShapes);
 
-    const shapesChain = parallelShapes.next(mergeResults).next(confidenceCheckShapes);
+    const mergeShapesHybrid = new sfn.Pass(this, 'MergeShapesHybrid', {
+      parameters: {
+        'bucket.$': '$[0].bucket',
+        'key.$': '$[0].key',
+        'report_id.$': '$[0].report_id',
+        'extractionType': 'excel-hybrid',
+        'excelData.$': '$[0].excelData',
+        'pages.$': '$[0].pages',
+        'ocrResults.$': '$[0].ocrCheck.Payload.ocrResults',
+        'photoInterpretations.$': '$[1].photoInterpretations',
+        'confidence': 1.0,
+      },
+    });
+    const normalizeShapesHybrid = new tasks.LambdaInvoke(this, 'NormalizeShapesHybrid', {
+      lambdaFunction: normalizeResultsFn,
+      payloadResponseOnly: true,
+    });
+    const storeShapesHybrid = new tasks.LambdaInvoke(this, 'StoreShapesHybrid', {
+      lambdaFunction: storeResultsFn,
+      payloadResponseOnly: true,
+    });
+    renderPdfImagesShapes
+      .next(parallelShapesHybrid)
+      .next(mergeShapesHybrid)
+      .next(normalizeShapesHybrid)
+      .next(storeShapesHybrid)
+      .next(makeIndexTask('IndexEmbeddingsShapesHybrid'))
+      .next(done);
+
+    const shapesOcrCheck = new sfn.Choice(this, 'ShapesOcrCheck')
+      .when(sfn.Condition.booleanEquals('$.hasPagesNeedOcr', true), renderPdfImagesShapes)
+      .otherwise(setExcelPdfText);
+
+    const shapesChain = parallelShapes
+      .next(preMergeShapes)
+      .next(shapesOcrCheck);
+
+    // --- docx パス: PyMuPDF テキスト抽出必須 + 画像/グラフがあれば OCR も実行 ---
+    const libreOfficeConvertDocx = new tasks.LambdaInvoke(this, 'LibreOfficeConvertDocx', {
+      lambdaFunction: libreOfficeConvertFn,
+      payloadResponseOnly: true,
+    });
+    const extractPdfTextDocx = new tasks.LambdaInvoke(this, 'ExtractPdfTextDocx', {
+      lambdaFunction: extractPdfTextFn,
+      payloadResponseOnly: true,
+    });
+
+    // --- docx OCR なし（テキストのみ） ---
+    const normalizeDocx = new tasks.LambdaInvoke(this, 'NormalizeDocx', {
+      lambdaFunction: normalizeResultsFn,
+      payloadResponseOnly: true,
+    });
+    const storeDocx = new tasks.LambdaInvoke(this, 'StoreDocx', {
+      lambdaFunction: storeResultsFn,
+      payloadResponseOnly: true,
+    });
+    normalizeDocx
+      .next(storeDocx)
+      .next(makeIndexTask('IndexEmbeddingsDocx'))
+      .next(done);
+
+    // --- docx ハイブリッド（PyMuPDF テキスト + 画像/グラフ OCR + LLM 写真解釈）---
+    const renderPdfImagesDocx = new tasks.LambdaInvoke(this, 'RenderPdfImagesDocx', {
+      lambdaFunction: renderPdfImagesFn,
+      payloadResponseOnly: true,
+    });
+    const ocrDocxHybridReady = new sfn.Pass(this, 'OcrDocxHybridReady');
+    const interpretPhotoDocx = new tasks.LambdaInvoke(this, 'InterpretPhotoDocx', {
+      lambdaFunction: interpretPhotoFn,
+      payloadResponseOnly: true,
+    });
+    const parallelDocxHybrid = new sfn.Parallel(this, 'ParallelDocxHybrid');
+    parallelDocxHybrid.branch(buildOcrAsyncMerge('OcrDocx', '$.key', ocrDocxHybridReady));
+    parallelDocxHybrid.branch(interpretPhotoDocx);
+
+    const mergeDocxHybrid = new sfn.Pass(this, 'MergeDocxHybrid', {
+      parameters: {
+        'bucket.$': '$[0].bucket',
+        'key.$': '$[0].key',
+        'report_id.$': '$[0].report_id',
+        'extractionType': 'pdf-hybrid',
+        'pages.$': '$[0].pages',
+        'ocrResults.$': '$[0].ocrCheck.Payload.ocrResults',
+        'photoInterpretations.$': '$[1].photoInterpretations',
+        'confidence': 1.0,
+      },
+    });
+    const normalizeDocxHybrid = new tasks.LambdaInvoke(this, 'NormalizeDocxHybrid', {
+      lambdaFunction: normalizeResultsFn,
+      payloadResponseOnly: true,
+    });
+    const storeDocxHybrid = new tasks.LambdaInvoke(this, 'StoreDocxHybrid', {
+      lambdaFunction: storeResultsFn,
+      payloadResponseOnly: true,
+    });
+    renderPdfImagesDocx
+      .next(parallelDocxHybrid)
+      .next(mergeDocxHybrid)
+      .next(normalizeDocxHybrid)
+      .next(storeDocxHybrid)
+      .next(makeIndexTask('IndexEmbeddingsDocxHybrid'))
+      .next(done);
+
+    const docxOcrCheck = new sfn.Choice(this, 'DocxOcrCheck')
+      .when(sfn.Condition.booleanEquals('$.hasPagesNeedOcr', true), renderPdfImagesDocx)
+      .otherwise(normalizeDocx);
+
+    const docxChain = libreOfficeConvertDocx
+      .next(extractPdfTextDocx)
+      .next(docxOcrCheck);
 
     // --- ファイル種別による分岐 ---
     const classifyFile = new tasks.LambdaInvoke(this, 'ClassifyFile', {
@@ -636,10 +861,8 @@ export class PipelineStack extends cdk.Stack {
     const fileTypeChoice = new sfn.Choice(this, 'FileTypeChoice')
       .when(sfn.Condition.stringEquals('$.fileType', 'digital-pdf'), pdfChain)
       .when(sfn.Condition.stringEquals('$.fileType', 'scan-pdf'), scanPdfChain)
-      .when(
-        sfn.Condition.stringEquals('$.fileType', 'xlsx-with-shapes'),
-        shapesChain,
-      )
+      .when(sfn.Condition.stringEquals('$.fileType', 'xlsx-with-shapes'), shapesChain)
+      .when(sfn.Condition.stringEquals('$.fileType', 'docx'), docxChain)
       .otherwise(
         new sfn.Fail(this, 'UnsupportedFileType', {
           cause: 'Unsupported file type',
@@ -696,7 +919,7 @@ export class PipelineStack extends cdk.Stack {
                 body: {
                   detail: {
                     object: {
-                      key: [{ suffix: '.xlsx' }, { suffix: '.pdf' }],
+                      key: [{ suffix: '.xlsx' }, { suffix: '.pdf' }, { suffix: '.docx' }, { suffix: '.doc' }],
                     },
                   },
                 },
