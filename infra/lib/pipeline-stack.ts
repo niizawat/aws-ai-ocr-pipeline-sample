@@ -525,7 +525,7 @@ export class PipelineStack extends cdk.Stack {
 
     const confidenceCheckPdfFallback = new sfn.Choice(this, 'ConfidenceCheckPdfFallback')
       .when(
-        sfn.Condition.numberGreaterThanEquals('$.confidence', 999),
+        sfn.Condition.numberGreaterThanEquals('$.confidence', 0.7),
         normalizePdfFallbackHigh
           .next(storePdfFallbackHigh)
           .next(makeIndexTask('IndexEmbeddingsPdfFallbackHigh'))
@@ -600,7 +600,7 @@ export class PipelineStack extends cdk.Stack {
 
     const confidenceCheckScan = new sfn.Choice(this, 'ConfidenceCheckScan')
       .when(
-        sfn.Condition.numberGreaterThanEquals('$.confidence', 999),
+        sfn.Condition.numberGreaterThanEquals('$.confidence', 0.7),
         normalizeOcrHigh
           .next(storeOcrHigh)
           .next(makeIndexTask('IndexEmbeddingsOcrHigh'))
