@@ -156,5 +156,5 @@ Labeling portal: ${PORTAL_URL}
   2. Workforce 用 Cognito（プール名: ${PROJECT_NAME}-a2i-workforce）でサインイン
   3. レビュー管理画面の「レビュー待ち」に並んだタスクを処理する
 
-Web アプリ (quality-report.zawanee.online) のログインとは別アカウントです。
+Web アプリ（AnalysisStack の AppUrl）のログインとは別アカウントです。
 EOF

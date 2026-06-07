@@ -9,3 +9,8 @@
 .mypy_cache/
 AGENTS.md
 infra/test-fixtures/
+# CDK context にはアカウント ID が含まれるため除外
+infra/cdk.context.json
+# ローカル環境変数ファイル
+**/.env.local
+**/.env.*.local
